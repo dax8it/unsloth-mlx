@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="unsloth_mlx_logo_f.png" alt="Unsloth-MLX Logo" width="150"/>
+  <img src="unsloth_mlx_logo_f.png" alt="Unsloth-MLX Logo" width="200"/>
 </p>
 
 <h1 align="center">Unsloth-MLX</h1>
