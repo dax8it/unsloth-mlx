@@ -24,6 +24,17 @@
 
 ---
 
+> [!NOTE]
+> **Why I Built This (A Personal Note)**
+>
+> I rely on Unsloth for my daily fine-tuning on cloud GPUs—it's the gold standard for me. But recently, I started working on a MacBook M4 and hit a friction point: I wanted to prototype locally on my Mac, then scale up to the cloud without rewriting my entire training script.
+>
+> Since Unsloth relies on Triton (which Macs don't have, yet), I couldn't use it locally. I built `unsloth-mlx` to solve this specific "Context Switch" problem. It wraps Apple's native MLX framework in an Unsloth-compatible API.
+>
+> **The goal isn't to replace Unsloth or claim superior performance.** The goal is **code portability**: allowing you to write `FastLanguageModel` code once on your Mac, test it, and then push that *exact same script* to a CUDA cluster. It solves a workflow problem, not just a hardware one.
+>
+> This is an "unofficial" project built by a fan, for fans who happen to use Macs.
+
 ## Why Unsloth-MLX?
 
 Bringing the [Unsloth](https://github.com/unslothai/unsloth) experience to Mac users via Apple's [MLX](https://github.com/ml-explore/mlx) framework.
