@@ -94,6 +94,17 @@ Local Mac (Unsloth-MLX)     →     Cloud GPU (Unsloth)
 | **GUI Interface** | ✅ New | Gradio-based web UI |
 | PyPI Package | ✅ Available | `uv pip install unsloth-mlx` |
 
+## TODO / Roadmap
+
+- [ ] SFT: Show train/val loss + perplexity in the GUI during training (and save a small metrics log)
+- [ ] SFT: Add a small built-in prompt evaluation set runner (before/after fine-tune comparison)
+- [ ] RL: Add clearer dataset schema validation + sample preview per method (DPO/ORPO/GRPO/KTO/SimPO)
+- [ ] RL: Add built-in reward function templates/presets for GRPO (math, formatting, length, etc.)
+- [ ] RL: Add better progress reporting (loss components, reward stats, win-rate-like summaries)
+- [ ] RL: Improve checkpointing/resume support (continue training from an output folder)
+- [ ] Export: Add optional quantization + export presets (quality/speed) and better compatibility notes per model family
+- [ ] Packaging: Publish to PyPI and add a simple versioned release workflow
+
 ## Installation
 
 ```bash
