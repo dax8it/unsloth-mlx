@@ -6,9 +6,13 @@ This provides an easy-to-use GUI for all Unsloth-MLX features.
 """
 
 import gradio as gr
+import contextlib
+import io
 import json
 import os
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -38,6 +42,7 @@ class AppState:
         self.tokenizer = None
         self.model_name = None
         self.training_in_progress = False
+        self.testing_in_progress = False
 
 
 state = AppState()
@@ -80,6 +85,143 @@ def load_local_or_hub_dataset(dataset_path: str):
         raise ValueError(f"Unsupported dataset file type: {dataset_path}")
 
     return load_dataset(dataset_path, split="train")
+
+
+def _choose_dataset_path(upload_obj, dataset_path_text: str) -> str:
+    if upload_obj is not None:
+        return stable_copy_uploaded_file(upload_obj)
+
+    dataset_path_text = str(dataset_path_text or "").strip()
+    if dataset_path_text == "":
+        raise ValueError("Please upload a dataset or provide a dataset path")
+
+    if not os.path.isfile(dataset_path_text):
+        raise FileNotFoundError(f"Dataset file not found: {dataset_path_text}")
+
+    return dataset_path_text
+
+
+def _choose_optional_dataset_path(upload_obj, dataset_path_text: str) -> Optional[str]:
+    if upload_obj is not None:
+        return stable_copy_uploaded_file(upload_obj)
+
+    dataset_path_text = str(dataset_path_text or "").strip()
+    if dataset_path_text == "":
+        return None
+
+    if not os.path.isfile(dataset_path_text):
+        raise FileNotFoundError(f"Dataset file not found: {dataset_path_text}")
+
+    return dataset_path_text
+
+
+def _validate_jsonl_file(
+    file_path: str,
+    required_fields,
+    validate_row,
+    preview_rows: int = 5,
+    max_scan_rows: int = 2000,
+):
+    total = 0
+    valid = 0
+    invalid = 0
+    errors = []
+    preview = []
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, start=1):
+            if total >= max_scan_rows:
+                break
+            s = line.strip()
+            if s == "":
+                continue
+            total += 1
+
+            try:
+                obj = json.loads(s)
+            except Exception as e:
+                invalid += 1
+                if len(errors) < 10:
+                    errors.append(f"Line {line_num}: invalid JSON ({e})")
+                continue
+
+            missing = [k for k in required_fields if k not in obj]
+            if missing:
+                invalid += 1
+                if len(errors) < 10:
+                    errors.append(f"Line {line_num}: missing fields: {', '.join(missing)}")
+                continue
+
+            try:
+                row_ok, row_err = validate_row(obj)
+            except Exception as e:
+                row_ok, row_err = False, str(e)
+
+            if not row_ok:
+                invalid += 1
+                if len(errors) < 10:
+                    errors.append(f"Line {line_num}: {row_err}")
+                continue
+
+            valid += 1
+            if len(preview) < max(1, int(preview_rows)):
+                preview.append(obj)
+
+    summary = {
+        "file": str(file_path),
+        "rows_scanned": total,
+        "valid_rows": valid,
+        "invalid_rows": invalid,
+        "errors": errors,
+        "preview": preview,
+    }
+    return json.dumps(summary, indent=2)
+
+
+def validate_sft_dataset(upload_obj, dataset_path_text: str, preview_rows: int = 5):
+    try:
+        path = _choose_dataset_path(upload_obj, dataset_path_text)
+
+        def _validate_row(obj):
+            msgs = obj.get("messages")
+            if not isinstance(msgs, list) or len(msgs) == 0:
+                return False, "'messages' must be a non-empty list"
+            for i, m in enumerate(msgs):
+                if not isinstance(m, dict):
+                    return False, f"messages[{i}] must be an object"
+                if "role" not in m or "content" not in m:
+                    return False, f"messages[{i}] must have 'role' and 'content'"
+            return True, ""
+
+        return _validate_jsonl_file(
+            path,
+            required_fields=["messages"],
+            validate_row=_validate_row,
+            preview_rows=int(preview_rows),
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=2)
+
+
+def validate_preference_dataset(upload_obj, dataset_path_text: str, preview_rows: int = 5):
+    try:
+        path = _choose_dataset_path(upload_obj, dataset_path_text)
+
+        def _validate_row(obj):
+            for k in ("prompt", "chosen", "rejected"):
+                v = obj.get(k)
+                if not isinstance(v, str) or v.strip() == "":
+                    return False, f"'{k}' must be a non-empty string"
+            return True, ""
+
+        return _validate_jsonl_file(
+            path,
+            required_fields=["prompt", "chosen", "rejected"],
+            validate_row=_validate_row,
+            preview_rows=int(preview_rows),
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=2)
 
 
 def _coerce_int(value, default: int):
@@ -187,6 +329,55 @@ def _first_selected_path(selection):
     return str(selection)
 
 
+def run_tests(test_suite: str, output_mode: str, progress=gr.Progress()):
+    if state.testing_in_progress:
+        return "Tests are already running. Please wait."
+
+    state.testing_in_progress = True
+    try:
+        repo_root = Path(__file__).resolve().parent
+
+        mode = str(output_mode or "Compact").strip()
+        if mode == "Verbose":
+            mode_args = ["-v"]
+        elif mode == "Verbose+prints":
+            mode_args = ["-v", "-s"]
+        else:
+            mode_args = ["-q"]
+
+        if test_suite == "Quick (fast)":
+            args = mode_args + ["tests/test_losses.py", "tests/test_trainers.py"]
+        else:
+            args = mode_args
+
+        cmd = [sys.executable, "-m", "pytest"] + args
+        progress(0, desc="Running tests...")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            return f"Error running tests: {str(e)}"
+
+        out = ""
+        if result.stdout:
+            out += result.stdout
+        if result.stderr:
+            if out != "":
+                out += "\n"
+            out += result.stderr
+
+        if result.returncode == 0:
+            return "✓ Tests passed\n\n" + out
+        return f"✗ Tests failed (exit code {result.returncode})\n\n" + out
+    finally:
+        state.testing_in_progress = False
+
+
 def _choose_output_dir_from_explorer(selection, current_value: str):
     chosen = _first_selected_path(selection)
     if chosen == "":
@@ -195,6 +386,215 @@ def _choose_output_dir_from_explorer(selection, current_value: str):
     if p.is_file():
         p = p.parent
     return str(p), gr.update(visible=False)
+
+
+def _as_existing_dir(path_str: str) -> str:
+    s = str(path_str or "").strip()
+    try:
+        p = Path(s).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p)
+        if p.is_file():
+            p = p.parent
+        if p.exists() and p.is_dir():
+            return str(p.resolve())
+    except Exception:
+        pass
+    return str(Path.cwd())
+
+
+def _escape_applescript_string(s: str) -> str:
+    return str(s).replace('"', '\\"')
+
+
+def _pick_directory_dialog(current_value: str):
+    current_value = str(current_value or "").strip()
+    if sys.platform == "darwin":
+        initialdir = _as_existing_dir(current_value)
+        initialdir_escaped = _escape_applescript_string(initialdir)
+
+        script = (
+            "try\n"
+            f"set defaultLocation to POSIX file \"{initialdir_escaped}/\"\n"
+            "set theFolder to choose folder with prompt \"Select a folder\" default location defaultLocation\n"
+            "POSIX path of theFolder\n"
+            "on error\n"
+            "return \"\"\n"
+            "end try\n"
+        )
+        try:
+            chosen = subprocess.check_output(["osascript", "-e", script], text=True).strip()
+            if chosen:
+                return chosen
+        except Exception:
+            pass
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        initialdir = None
+        try:
+            p = Path(current_value).expanduser()
+            initialdir = str(p if p.is_dir() else p.parent)
+        except Exception:
+            initialdir = None
+        if not initialdir:
+            initialdir = str(Path.cwd())
+
+        chosen = filedialog.askdirectory(initialdir=initialdir, mustexist=False)
+        root.destroy()
+        if not chosen:
+            return current_value
+        return str(chosen)
+    except Exception:
+        return current_value
+
+
+def _pick_file_dialog(current_value: str, filetypes):
+    current_value = str(current_value or "").strip()
+    if sys.platform == "darwin":
+        initialdir = _as_existing_dir(current_value)
+        initialdir_escaped = _escape_applescript_string(initialdir)
+
+        script = (
+            "try\n"
+            f"set defaultLocation to POSIX file \"{initialdir_escaped}/\"\n"
+            "set theFile to choose file with prompt \"Select a file\" default location defaultLocation\n"
+            "POSIX path of theFile\n"
+            "on error\n"
+            "return \"\"\n"
+            "end try\n"
+        )
+        try:
+            chosen = subprocess.check_output(["osascript", "-e", script], text=True).strip()
+            if chosen:
+                return chosen
+        except Exception:
+            pass
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        initialdir = None
+        try:
+            p = Path(current_value).expanduser()
+            initialdir = str(p.parent if p.suffix else p)
+        except Exception:
+            initialdir = None
+        if not initialdir:
+            initialdir = str(Path.cwd())
+
+        chosen = filedialog.askopenfilename(initialdir=initialdir, filetypes=filetypes)
+        root.destroy()
+        if not chosen:
+            return current_value
+        return str(chosen)
+    except Exception:
+        return current_value
+
+
+def _pick_save_file_dialog(current_value: str, defaultextension: str, filetypes):
+    current_value = str(current_value or "").strip()
+    if sys.platform == "darwin":
+        try:
+            p = Path(current_value).expanduser()
+            if p.suffix:
+                initialdir = _as_existing_dir(str(p.parent))
+                initialfile = p.name
+            else:
+                initialdir = _as_existing_dir(str(p))
+                initialfile = "model" + str(defaultextension or "")
+        except Exception:
+            initialdir = str(Path.cwd())
+            initialfile = "model" + str(defaultextension or "")
+
+        # AppleScript needs directory path ending with '/'
+        initialdir = _as_existing_dir(initialdir)
+        initialdir_escaped = _escape_applescript_string(initialdir)
+        if not initialdir_escaped.endswith("/"):
+            initialdir_escaped = initialdir_escaped + "/"
+        initialfile_escaped = _escape_applescript_string(initialfile)
+
+        script = (
+            "try\n"
+            f"set defaultLocation to POSIX file \"{initialdir_escaped}\"\n"
+            f"set defaultName to \"{initialfile_escaped}\"\n"
+            "set theFile to choose file name with prompt \"Save file as\" default location defaultLocation default name defaultName\n"
+            "POSIX path of theFile\n"
+            "on error\n"
+            "return \"\"\n"
+            "end try\n"
+        )
+        try:
+            chosen = subprocess.check_output(["osascript", "-e", script], text=True).strip()
+            if chosen:
+                # Ensure extension
+                if defaultextension and not chosen.lower().endswith(str(defaultextension).lower()):
+                    chosen = chosen + str(defaultextension)
+                return chosen
+        except Exception:
+            pass
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        initialdir = None
+        initialfile = None
+        try:
+            p = Path(current_value).expanduser()
+            if p.suffix:
+                initialdir = str(p.parent)
+                initialfile = p.name
+            else:
+                initialdir = str(p)
+        except Exception:
+            initialdir = None
+        if not initialdir:
+            initialdir = str(Path.cwd())
+
+        chosen = filedialog.asksaveasfilename(
+            initialdir=initialdir,
+            initialfile=initialfile,
+            defaultextension=defaultextension,
+            filetypes=filetypes,
+        )
+        root.destroy()
+        if not chosen:
+            return current_value
+        return str(chosen)
+    except Exception:
+        return current_value
+
+
+def _choose_path_from_explorer(selection, current_value: str):
+    chosen = _first_selected_path(selection)
+    if chosen == "":
+        return str(current_value or ""), gr.update(visible=False)
+    return str(chosen), gr.update(visible=False)
 
 
 def _choose_output_file_in_dir_from_explorer(selection, current_value: str):
@@ -338,6 +738,12 @@ def load_adapters(adapter_dir: str):
 
 def run_sft_training(
     dataset_file,
+    dataset_path_text: str,
+    val_dataset_file,
+    val_dataset_path_text: str,
+    auto_split: bool,
+    val_split_percent: int,
+    split_seed: int,
     output_dir: str,
     num_train_epochs: int,
     learning_rate: float,
@@ -349,8 +755,8 @@ def run_sft_training(
     if state.model is None:
         return "Error: Please load a model first!"
 
-    if dataset_file is None:
-        return "Error: Please upload a training dataset!"
+    if dataset_file is None and str(dataset_path_text or "").strip() == "":
+        return "Error: Please upload a training dataset or provide a dataset path!"
 
     try:
         num_train_epochs = max(1, _coerce_int(num_train_epochs, 3))
@@ -360,17 +766,59 @@ def run_sft_training(
 
         progress(0, desc="Preparing dataset...")
 
-        dataset_path = stable_copy_uploaded_file(dataset_file)
+        dataset_path = _choose_dataset_path(dataset_file, dataset_path_text)
         print(f"Loading dataset '{dataset_path}'...")
         dataset = load_local_or_hub_dataset(dataset_path)
+
+        train_dataset = dataset
+        eval_dataset = None
+
+        val_dataset_path = _choose_optional_dataset_path(val_dataset_file, val_dataset_path_text)
+        if val_dataset_path is not None:
+            print(f"Loading validation dataset '{val_dataset_path}'...")
+            eval_dataset = load_local_or_hub_dataset(val_dataset_path)
+        else:
+            if bool(auto_split):
+                try:
+                    pct = float(val_split_percent)
+                except Exception:
+                    pct = 5.0
+                pct = max(1.0, min(50.0, pct))
+                test_size = pct / 100.0
+
+                try:
+                    seed = _coerce_int(split_seed, 42)
+                except Exception:
+                    seed = 42
+
+                try:
+                    split = dataset.train_test_split(test_size=test_size, seed=int(seed), shuffle=True)
+                    train_dataset = split["train"]
+                    eval_dataset = split["test"]
+                    print(
+                        f"Auto-split enabled: train={len(train_dataset)} rows, val={len(eval_dataset)} rows (seed={seed})"
+                    )
+                except Exception:
+                    import random
+
+                    rows = list(dataset)
+                    rng = random.Random(int(seed))
+                    rng.shuffle(rows)
+                    n_val = max(1, int(round(len(rows) * test_size)))
+                    eval_dataset = rows[:n_val]
+                    train_dataset = rows[n_val:]
+                    print(
+                        f"Auto-split enabled: train={len(train_dataset)} rows, val={len(eval_dataset)} rows (seed={seed})"
+                    )
 
         progress(0.2, desc="Configuring trainer...")
 
         # Configure training
         trainer = SFTTrainer(
             model=state.model,
-            train_dataset=dataset,
+            train_dataset=train_dataset,
             tokenizer=state.tokenizer,
+            eval_dataset=eval_dataset,
             args=SFTConfig(
                 output_dir=output_dir,
                 num_train_epochs=num_train_epochs,
@@ -383,10 +831,15 @@ def run_sft_training(
         progress(0.4, desc="Starting training...")
 
         # Train
-        trainer.train()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            trainer.train()
 
         progress(1.0, desc="Training complete!")
 
+        output = buf.getvalue().strip()
+        if output:
+            return output + f"\n\n✓ Training complete! Model saved to {output_dir}"
         return f"✓ Training complete! Model saved to {output_dir}"
     except Exception as e:
         return f"Error during training: {str(e)}"
@@ -398,6 +851,7 @@ def run_sft_training(
 def run_rl_training(
     method: str,
     dataset_file,
+    dataset_path_text: str,
     output_dir: str,
     learning_rate: float,
     max_steps: int,
@@ -408,8 +862,8 @@ def run_rl_training(
     if state.model is None:
         return "Error: Please load a model first!"
 
-    if dataset_file is None:
-        return "Error: Please upload a preference dataset!"
+    if dataset_file is None and str(dataset_path_text or "").strip() == "":
+        return "Error: Please upload a preference dataset or provide a dataset path!"
 
     try:
         learning_rate = _coerce_float(learning_rate, 5e-7)
@@ -421,7 +875,7 @@ def run_rl_training(
         # Load preference dataset
         from unsloth_mlx import prepare_preference_dataset
 
-        dataset_path = stable_copy_uploaded_file(dataset_file)
+        dataset_path = _choose_dataset_path(dataset_file, dataset_path_text)
         print(f"Loading dataset '{dataset_path}'...")
         raw_dataset = load_local_or_hub_dataset(dataset_path)
 
@@ -610,7 +1064,7 @@ def build_ui():
         with gr.Tabs():
             # ========== Tab 1: Model Loading ==========
             with gr.Tab("📥 Load Model"):
-                gr.Markdown("### Load a model from HuggingFace")
+                gr.Markdown("### Load a model (HuggingFace or local path)")
 
                 with gr.Row():
                     model_name = gr.Textbox(
@@ -619,6 +1073,7 @@ def build_ui():
                         placeholder="e.g., mlx-community/Llama-3.2-1B-Instruct-4bit",
                         info="Enter HuggingFace model name or path",
                     )
+                    browse_model_btn = gr.Button("Browse…")
                     hf_token = gr.Textbox(
                         label="HuggingFace Token (Optional)",
                         type="password",
@@ -641,6 +1096,12 @@ def build_ui():
                     fn=load_model,
                     inputs=[model_name, max_seq_length, load_in_4bit, load_in_8bit, hf_token],
                     outputs=[load_status, load_btn],
+                )
+
+                browse_model_btn.click(
+                    fn=_pick_directory_dialog,
+                    inputs=[model_name],
+                    outputs=[model_name],
                 )
 
                 with gr.Row():
@@ -801,6 +1262,63 @@ def build_ui():
                             file_types=[".jsonl"],
                         )
 
+                        with gr.Row():
+                            dataset_sft_path = gr.Textbox(
+                                label="Or Dataset Path (local JSONL)",
+                                value="",
+                                placeholder="e.g., ./data/train.jsonl",
+                                scale=4,
+                            )
+                            browse_sft_dataset_btn = gr.Button("Browse…", scale=1)
+
+                        val_dataset_sft = gr.File(
+                            label="Validation Dataset (Optional JSONL)",
+                            type="filepath",
+                            file_types=[".jsonl"],
+                        )
+
+                        with gr.Row():
+                            val_dataset_sft_path = gr.Textbox(
+                                label="Or Validation Dataset Path (local JSONL)",
+                                value="",
+                                placeholder="e.g., ./data/val.jsonl",
+                                scale=4,
+                            )
+                            browse_sft_val_dataset_btn = gr.Button("Browse…", scale=1)
+
+                        auto_split_sft = gr.Checkbox(
+                            label="Auto-split training dataset into train/val",
+                            value=False,
+                        )
+                        val_split_percent_sft = gr.Slider(
+                            label="Validation Split (%)",
+                            minimum=1,
+                            maximum=50,
+                            value=5,
+                            step=1,
+                        )
+                        split_seed_sft = gr.Number(
+                            label="Split Seed",
+                            value=42,
+                            minimum=0,
+                            maximum=2**31 - 1,
+                        )
+
+                        with gr.Row():
+                            validate_sft_btn = gr.Button("Validate / Preview Dataset")
+                            preview_rows_sft = gr.Slider(
+                                label="Preview Rows",
+                                minimum=1,
+                                maximum=20,
+                                value=5,
+                                step=1,
+                            )
+                        validate_sft_output = gr.Code(
+                            label="Dataset Validation",
+                            language="json",
+                            value="",
+                        )
+
                         format_examples_sft = gr.Radio(
                             label="Show Dataset Format Example",
                             choices=["SFT (Instruction Tuning)", "DPO (Preference)"],
@@ -847,6 +1365,12 @@ def build_ui():
                     fn=run_sft_training,
                     inputs=[
                         dataset_sft,
+                        dataset_sft_path,
+                        val_dataset_sft,
+                        val_dataset_sft_path,
+                        auto_split_sft,
+                        val_split_percent_sft,
+                        split_seed_sft,
                         output_dir_sft,
                         num_train_epochs,
                         learning_rate_sft,
@@ -854,6 +1378,40 @@ def build_ui():
                         max_steps_sft,
                     ],
                     outputs=[training_output_sft],
+                )
+
+                browse_sft_dataset_btn.click(
+                    fn=lambda current: _pick_file_dialog(
+                        current,
+                        filetypes=[
+                            ("JSONL", "*.jsonl"),
+                            ("JSON", "*.json"),
+                            ("CSV", "*.csv"),
+                            ("All files", "*"),
+                        ],
+                    ),
+                    inputs=[dataset_sft_path],
+                    outputs=[dataset_sft_path],
+                )
+
+                browse_sft_val_dataset_btn.click(
+                    fn=lambda current: _pick_file_dialog(
+                        current,
+                        filetypes=[
+                            ("JSONL", "*.jsonl"),
+                            ("JSON", "*.json"),
+                            ("CSV", "*.csv"),
+                            ("All files", "*"),
+                        ],
+                    ),
+                    inputs=[val_dataset_sft_path],
+                    outputs=[val_dataset_sft_path],
+                )
+
+                validate_sft_btn.click(
+                    fn=validate_sft_dataset,
+                    inputs=[dataset_sft, dataset_sft_path, preview_rows_sft],
+                    outputs=[validate_sft_output],
                 )
 
             # ========== Tab 5: RL Training ==========
@@ -875,6 +1433,30 @@ def build_ui():
                             label="Preference Dataset (JSONL) — Upload preference data (chosen/rejected)",
                             type="filepath",
                             file_types=[".jsonl"],
+                        )
+
+                        with gr.Row():
+                            dataset_rl_path = gr.Textbox(
+                                label="Or Dataset Path (local JSONL)",
+                                value="",
+                                placeholder="e.g., ./data/prefs.jsonl",
+                                scale=4,
+                            )
+                            browse_rl_dataset_btn = gr.Button("Browse…", scale=1)
+
+                        with gr.Row():
+                            validate_rl_btn = gr.Button("Validate / Preview Dataset")
+                            preview_rows_rl = gr.Slider(
+                                label="Preview Rows",
+                                minimum=1,
+                                maximum=20,
+                                value=5,
+                                step=1,
+                            )
+                        validate_rl_output = gr.Code(
+                            label="Dataset Validation",
+                            language="json",
+                            value="",
                         )
 
                         format_examples_rl = gr.Radio(
@@ -922,12 +1504,33 @@ def build_ui():
                     inputs=[
                         method,
                         dataset_rl,
+                        dataset_rl_path,
                         output_dir_rl,
                         learning_rate_rl,
                         max_steps_rl,
                         beta,
                     ],
                     outputs=[training_output_rl],
+                )
+
+                browse_rl_dataset_btn.click(
+                    fn=lambda current: _pick_file_dialog(
+                        current,
+                        filetypes=[
+                            ("JSONL", "*.jsonl"),
+                            ("JSON", "*.json"),
+                            ("CSV", "*.csv"),
+                            ("All files", "*"),
+                        ],
+                    ),
+                    inputs=[dataset_rl_path],
+                    outputs=[dataset_rl_path],
+                )
+
+                validate_rl_btn.click(
+                    fn=validate_preference_dataset,
+                    inputs=[dataset_rl, dataset_rl_path, preview_rows_rl],
+                    outputs=[validate_rl_output],
                 )
 
                 gr.Markdown("""
@@ -951,16 +1554,6 @@ def build_ui():
                                 label="Output Path", value="./adapters", placeholder="./adapters"
                             )
                             browse_adapters_btn = gr.Button("Browse…")
-                        adapters_browse_panel = gr.Column(visible=False)
-                        with adapters_browse_panel:
-                            adapters_picker = gr.FileExplorer(
-                                root_dir=str(Path.home()),
-                                file_count="single",
-                                ignore_glob="**/.*",
-                                height=260,
-                                label=None,
-                            )
-                            use_adapters_picker_btn = gr.Button("Use Selection")
                         save_adapters_btn = gr.Button("Save LoRA Adapters", variant="primary")
                         adapter_status = gr.Textbox(label="Status", value="", interactive=False)
 
@@ -973,16 +1566,6 @@ def build_ui():
                                 placeholder="./merged_model",
                             )
                             browse_merged_btn = gr.Button("Browse…")
-                        merged_browse_panel = gr.Column(visible=False)
-                        with merged_browse_panel:
-                            merged_picker = gr.FileExplorer(
-                                root_dir=str(Path.home()),
-                                file_count="single",
-                                ignore_glob="**/.*",
-                                height=260,
-                                label=None,
-                            )
-                            use_merged_picker_btn = gr.Button("Use Selection")
                         save_merged_btn = gr.Button("Save Merged Model", variant="primary")
                         merged_status = gr.Textbox(label="Status", value="", interactive=False)
 
@@ -996,16 +1579,6 @@ def build_ui():
                                 label="Output Path", value="./model.gguf", placeholder="./model.gguf"
                             )
                             browse_gguf_btn = gr.Button("Browse…")
-                        gguf_browse_panel = gr.Column(visible=False)
-                        with gguf_browse_panel:
-                            gguf_picker = gr.FileExplorer(
-                                root_dir=str(Path.home()),
-                                file_count="single",
-                                ignore_glob="**/.*",
-                                height=260,
-                                label=None,
-                            )
-                            use_gguf_picker_btn = gr.Button("Use Selection")
                         quantization = gr.Dropdown(
                             label="Quantization Method",
                             choices=["q4_k_m", "q5_k_m", "q8_0", "f16"],
@@ -1015,24 +1588,24 @@ def build_ui():
                         export_gguf_btn = gr.Button("Export to GGUF", variant="primary")
                         gguf_status = gr.Textbox(label="Status", value="", interactive=False)
 
-                browse_adapters_btn.click(lambda: gr.update(visible=True), outputs=[adapters_browse_panel])
-                browse_merged_btn.click(lambda: gr.update(visible=True), outputs=[merged_browse_panel])
-                browse_gguf_btn.click(lambda: gr.update(visible=True), outputs=[gguf_browse_panel])
-
-                use_adapters_picker_btn.click(
-                    fn=_choose_output_dir_from_explorer,
-                    inputs=[adapters_picker, adapter_output],
-                    outputs=[adapter_output, adapters_browse_panel],
+                browse_adapters_btn.click(
+                    fn=_pick_directory_dialog,
+                    inputs=[adapter_output],
+                    outputs=[adapter_output],
                 )
-                use_merged_picker_btn.click(
-                    fn=_choose_output_dir_from_explorer,
-                    inputs=[merged_picker, merged_output],
-                    outputs=[merged_output, merged_browse_panel],
+                browse_merged_btn.click(
+                    fn=_pick_directory_dialog,
+                    inputs=[merged_output],
+                    outputs=[merged_output],
                 )
-                use_gguf_picker_btn.click(
-                    fn=_choose_output_file_in_dir_from_explorer,
-                    inputs=[gguf_picker, gguf_output],
-                    outputs=[gguf_output, gguf_browse_panel],
+                browse_gguf_btn.click(
+                    fn=lambda current: _pick_save_file_dialog(
+                        current,
+                        defaultextension=".gguf",
+                        filetypes=[("GGUF", "*.gguf"), ("All files", "*")],
+                    ),
+                    inputs=[gguf_output],
+                    outputs=[gguf_output],
                 )
 
                 save_adapters_btn.click(
@@ -1054,17 +1627,51 @@ def build_ui():
                 - **GGUF**: For llama.cpp, Ollama, GPT4All (CPU inference)
                 """)
 
+            with gr.Tab("🧪 Tests"):
+                gr.Markdown("### Run automated tests")
+                gr.Markdown("These are the same tests you can run in Terminal with `python -m pytest`. Use Quick for fast checks.")
+
+                test_suite = gr.Radio(
+                    label="Test Suite",
+                    choices=["Quick (fast)", "Full (all tests)"] ,
+                    value="Quick (fast)",
+                )
+                output_mode = gr.Radio(
+                    label="Output Mode",
+                    choices=["Compact", "Verbose", "Verbose+prints"],
+                    value="Compact",
+                )
+                run_tests_btn = gr.Button("Run Tests", variant="primary")
+                tests_output = gr.Textbox(
+                    label="Test Output",
+                    value="",
+                    lines=18,
+                    interactive=False,
+                )
+
+                run_tests_btn.click(
+                    fn=run_tests,
+                    inputs=[test_suite, output_mode],
+                    outputs=[tests_output],
+                )
+
             # ========== Tab 7: Documentation ==========
             with gr.Tab("📖 Documentation"):
                 gr.Markdown("""
                 ### Unsloth-MLX GUI Documentation
                 
-                #### Getting Started
-                1. Go to **Load Model** tab and select a model from HuggingFace
-                2. Click **Load Model** and wait for it to load
-                3. Configure **LoRA** if you want to fine-tune
-                4. Go to **Chat** to test the model, or **Training** to fine-tune
-                5. **Export** your model when done
+                #### Quick Start
+                1. **Load Model**: Enter a Hugging Face repo ID *or* choose a local model folder with **Browse…**.
+                2. **(Optional) Load Adapters**: Point at an adapters folder (must contain `adapters.safetensors`).
+                3. **Chat**: Send a prompt to quickly sanity-check behavior.
+                4. **Train**: Use **SFT Training** for instruction tuning.
+                5. **Export**: Save adapters, save a merged model, or export GGUF.
+
+                #### Native Browse Buttons (macOS)
+                Anywhere you see **Browse…**, the app opens a native macOS picker (folder/file dialogs).
+                
+                #### Datasets
+                Use **Validate / Preview Dataset** to confirm your JSONL format and preview a few rows.
                 
                 #### Dataset Formats
                 
@@ -1084,6 +1691,12 @@ def build_ui():
                     "rejected": "idk it's like computers doing stuff"
                 }
                 ```
+
+                #### SFT Training (train/val)
+                - Provide a **Validation Dataset** (recommended) to measure generalization.
+                - Or enable **Auto-split** to split a single JSONL into train/val (default 95/5) with a fixed seed.
+                
+                **Tip:** A fixed seed makes the split reproducible so you can compare runs fairly.
                 
                 #### Training Methods
                 
@@ -1093,6 +1706,20 @@ def build_ui():
                 - **GRPO**: Group Relative Policy Optimization - for reasoning tasks
                 - **KTO**: Kahneman-Tversky Optimization - for unpaired data
                 - **SimPO**: Simple Preference Optimization - simplified DPO
+
+                #### Tests
+                The **🧪 Tests** tab runs the repository's automated tests (it does *not* evaluate your fine-tuned model quality).
+                - **Quick (fast)**: core losses + trainer utilities
+                - **Full (all tests)**: runs the full `tests/` suite
+                - **Output Mode**:
+                  - **Compact**: summary output
+                  - **Verbose**: shows every test name
+                  - **Verbose+prints**: verbose plus `print()` output (useful when debugging)
+
+                #### Export
+                - **Save LoRA Adapters**: saves the adapter weights (small, portable)
+                - **Save Merged Model**: exports a fused Hugging Face-style folder
+                - **Export to GGUF**: for llama.cpp / Ollama-style runtimes (model-family dependent)
                 
                 #### Tips
                 
