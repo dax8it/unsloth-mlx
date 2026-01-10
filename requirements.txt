@@ -8,6 +8,9 @@ huggingface-hub>=0.20.0
 numpy>=1.23.0
 tqdm>=4.65.0
 
+# GUI dependencies
+gradio>=4.0.0
+
 # Optional training dependencies (install with: pip install -r requirements-train.txt)
 # trl>=0.7.0
 # peft>=0.7.0

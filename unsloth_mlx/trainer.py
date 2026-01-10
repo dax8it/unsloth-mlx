@@ -213,6 +213,7 @@ def save_model_hf_format(
     output_dir: str,
     push_to_hub: bool = False,
     repo_id: Optional[str] = None,
+    base_model_name: Optional[str] = None,
     **kwargs
 ):
     """
@@ -247,6 +248,35 @@ def save_model_hf_format(
 
     print(f"Saving merged model to {output_dir}...")
 
+    adapter_path = None
+    try:
+        if hasattr(model, "get_adapter_path"):
+            adapter_path = model.get_adapter_path()
+        elif hasattr(model, "model") and hasattr(model.model, "get_adapter_path"):
+            adapter_path = model.model.get_adapter_path()
+    except Exception:
+        adapter_path = None
+
+    if base_model_name and adapter_path:
+        try:
+            adapter_path = str(adapter_path)
+            if Path(adapter_path).exists():
+                import subprocess
+                cmd = [
+                    "mlx_lm.fuse",
+                    "--model",
+                    str(base_model_name),
+                    "--adapter-path",
+                    adapter_path,
+                    "--save-path",
+                    str(output_dir),
+                ]
+                subprocess.run(cmd, check=True)
+                print(f"✓ Model saved to {output_dir}")
+                return
+        except Exception:
+            pass
+
     # For MLX models, we need to use mlx_lm utilities to save
     # This will save in a format compatible with HuggingFace
     try:
@@ -277,20 +307,31 @@ def save_model_hf_format(
         save_model(str(output_dir), actual_model)
 
         # Save tokenizer separately
-        tokenizer.save_pretrained(str(output_dir))
+        if tokenizer is not None:
+            tokenizer.save_pretrained(str(output_dir))
 
         # Save config.json if available (needed for loading and GGUF export)
-        if hasattr(model, 'config') and model.config is not None:
-            config_path = output_dir / "config.json"
-            with open(config_path, 'w') as f:
-                json.dump(model.config, f, indent=2)
-        elif hasattr(model, 'model_path') and model.model_path:
-            # Try to copy config from original model path
-            src_config = Path(model.model_path) / "config.json"
-            if src_config.exists():
+        config_dst = output_dir / "config.json"
+        if not config_dst.exists():
+            try:
                 import shutil
-                shutil.copy(src_config, output_dir / "config.json")
+                from huggingface_hub import hf_hub_download
 
+                base = base_model_name or getattr(tokenizer, "name_or_path", None)
+                if base:
+                    base_path = Path(str(base))
+                    local_cfg = base_path / "config.json"
+                    if local_cfg.exists():
+                        shutil.copy(local_cfg, config_dst)
+                    else:
+                        cfg_path = hf_hub_download(
+                            repo_id=str(base),
+                            filename="config.json",
+                            local_files_only=True,
+                        )
+                        shutil.copy(cfg_path, config_dst)
+            except Exception:
+                pass
         print(f"✓ Model saved to {output_dir}")
 
         if push_to_hub and repo_id:
@@ -353,11 +394,32 @@ def export_to_gguf(
         not Path(model_path_str).exists()
     )
 
+    # Validate model type for GGUF export (only LLaMA/Mistral/Mixtral supported by mlx_lm)
+    try:
+        from huggingface_hub import hf_hub_download
+
+        cfg_path = hf_hub_download(
+            repo_id=str(model_path),
+            filename="config.json",
+            local_files_only=True,
+        )
+        with open(cfg_path, "r") as f:
+            cfg = json.load(f)
+        model_type = cfg.get("model_type")
+        supported_types = {"llama", "mistral", "mixtral"}
+        if model_type and model_type not in supported_types:
+            raise ValueError(
+                f"GGUF export is not supported for model_type='{model_type}'. "
+                f"Supported types: {', '.join(sorted(supported_types))}. "
+                "MLX-LM GGUF export only supports LLaMA/Mistral/Mixtral families. "
+                "For LM Studio, use the MLX backend with a fused MLX folder export instead."
+            )
+    except Exception:
+        pass
+
     # Keep as string for HF models, convert to Path for local paths
     if not is_hf_model:
         model_path = Path(model_path_str)
-
-    # Handle output path
     if output_path is None:
         output_path = Path("./model.gguf")
     else:
@@ -402,7 +464,7 @@ def export_to_gguf(
     if adapter_path:
         cmd.extend(["--adapter-path", str(adapter_path)])
 
-    # Add dequantize flag for quantized models (required for proper GGUF export)
+    # Add dequantize flag for quantized models (accept both spellings)
     if kwargs.get('dequantize', False) or kwargs.get('de_quantize', False):
         cmd.append("--dequantize")
 
@@ -412,6 +474,8 @@ def export_to_gguf(
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         if result.stdout:
             print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
         print(f"✓ Model exported to {output_path}")
         return str(output_path)
 

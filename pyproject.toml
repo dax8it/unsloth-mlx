@@ -58,10 +58,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ARahim3/unsloth-mlx"
-Documentation = "https://github.com/ARahim3/unsloth-mlx#readme"
-Repository = "https://github.com/ARahim3/unsloth-mlx"
-Issues = "https://github.com/ARahim3/unsloth-mlx/issues"
+Homepage = "https://github.com/dax8it/unsloth-mlx"
+Documentation = "https://github.com/dax8it/unsloth-mlx#readme"
+Repository = "https://github.com/dax8it/unsloth-mlx"
+Issues = "https://github.com/dax8it/unsloth-mlx/issues"
 
 [tool.setuptools.packages.find]
 include = ["unsloth_mlx*"]

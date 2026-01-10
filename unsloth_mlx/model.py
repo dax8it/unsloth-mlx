@@ -606,13 +606,23 @@ class MLXModelWrapper:
                 break
 
         if adapter_file and adapter_file.exists():
-            shutil.copy(adapter_file, output_dir / "adapters.safetensors")
+            dst_adapter = output_dir / "adapters.safetensors"
+            try:
+                if adapter_file.resolve() != dst_adapter.resolve():
+                    shutil.copy(adapter_file, dst_adapter)
+            except Exception:
+                shutil.copy(adapter_file, dst_adapter)
             print(f"✓ Adapters saved to {output_dir}")
 
             # Also copy adapter config if it exists
             config_file = adapter_file.parent / "adapter_config.json"
             if config_file.exists():
-                shutil.copy(config_file, output_dir / "adapter_config.json")
+                dst_config = output_dir / "adapter_config.json"
+                try:
+                    if config_file.resolve() != dst_config.resolve():
+                        shutil.copy(config_file, dst_config)
+                except Exception:
+                    shutil.copy(config_file, dst_config)
         else:
             searched = [str(loc) for loc in adapter_locations[:3]]
             print(f"⚠️  No adapters found. Searched: {searched}")

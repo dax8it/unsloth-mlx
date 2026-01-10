@@ -77,8 +77,15 @@ lora_*/
 merged_*/
 fused_*/
 *.gguf
+model.gguf/
+merged_model/
+merged_models/
+fused_model/
 train.jsonl
 valid.jsonl
+
+# Local datasets / uploads
+data/
 
 # =============================================================================
 # Misc
@@ -87,3 +94,6 @@ valid.jsonl
 *.tmp
 .env
 .env.local
+
+# Local GUI notes
+GUI_IMPLEMENTATION_SUMMARY.md
