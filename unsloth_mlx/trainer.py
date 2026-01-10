@@ -213,6 +213,7 @@ def save_model_hf_format(
     output_dir: str,
     push_to_hub: bool = False,
     repo_id: Optional[str] = None,
+    base_model_name: Optional[str] = None,
     **kwargs
 ):
     """
@@ -247,6 +248,35 @@ def save_model_hf_format(
 
     print(f"Saving model to {output_dir}...")
 
+    adapter_path = None
+    try:
+        if hasattr(model, "get_adapter_path"):
+            adapter_path = model.get_adapter_path()
+        elif hasattr(model, "model") and hasattr(model.model, "get_adapter_path"):
+            adapter_path = model.model.get_adapter_path()
+    except Exception:
+        adapter_path = None
+
+    if base_model_name and adapter_path:
+        try:
+            adapter_path = str(adapter_path)
+            if Path(adapter_path).exists():
+                import subprocess
+                cmd = [
+                    "mlx_lm.fuse",
+                    "--model",
+                    str(base_model_name),
+                    "--adapter-path",
+                    adapter_path,
+                    "--save-path",
+                    str(output_dir),
+                ]
+                subprocess.run(cmd, check=True)
+                print(f"✓ Model saved to {output_dir}")
+                return
+        except Exception:
+            pass
+
     # For MLX models, we need to use mlx_lm utilities to save
     # This will save in a format compatible with HuggingFace
     try:
@@ -258,7 +288,31 @@ def save_model_hf_format(
         else:
             actual_model = model
 
-        save_model(str(output_dir), actual_model, tokenizer)
+        save_model(str(output_dir), actual_model)
+        if tokenizer is not None:
+            tokenizer.save_pretrained(str(output_dir))
+
+        config_dst = output_dir / "config.json"
+        if not config_dst.exists():
+            try:
+                import shutil
+                from huggingface_hub import hf_hub_download
+
+                base = base_model_name or getattr(tokenizer, "name_or_path", None)
+                if base:
+                    base_path = Path(str(base))
+                    local_cfg = base_path / "config.json"
+                    if local_cfg.exists():
+                        shutil.copy(local_cfg, config_dst)
+                    else:
+                        cfg_path = hf_hub_download(
+                            repo_id=str(base),
+                            filename="config.json",
+                            local_files_only=True,
+                        )
+                        shutil.copy(cfg_path, config_dst)
+            except Exception:
+                pass
         print(f"✓ Model saved to {output_dir}")
 
         if push_to_hub and repo_id:
@@ -306,6 +360,28 @@ def export_to_gguf(
     """
     import subprocess
 
+    try:
+        from huggingface_hub import hf_hub_download
+
+        cfg_path = hf_hub_download(
+            repo_id=str(model_path),
+            filename="config.json",
+            local_files_only=True,
+        )
+        with open(cfg_path, "r") as f:
+            cfg = json.load(f)
+        model_type = cfg.get("model_type")
+        supported_types = {"llama", "mistral", "mixtral"}
+        if model_type and model_type not in supported_types:
+            raise ValueError(
+                f"GGUF export is not supported for model_type='{model_type}'. "
+                f"Supported types: {', '.join(sorted(supported_types))}. "
+                "LMX-LM GGUF export only supports LLaMA/Mistral/Mixtral families. "
+                "For LM Studio, use the MLX backend with a fused MLX folder export instead."
+            )
+    except Exception:
+        pass
+
     model_path = Path(model_path) if not model_path.startswith(('mlx-', 'meta-', 'mistral')) else model_path
     if output_path is None:
         if isinstance(model_path, Path):
@@ -338,37 +414,27 @@ def export_to_gguf(
 
     # Add de-quantize flag for better quality (optional)
     if kwargs.get('de_quantize', False):
-        cmd.append("--de-quantize")
+        cmd.append("--dequantize")
 
     print(f"\nRunning: {' '.join(cmd)}")
 
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
         print(f"✓ Model exported to {output_path}")
         return str(output_path)
 
     except subprocess.CalledProcessError as e:
-        print(f"Error during GGUF export: {e}")
+        details = []
+        details.append(f"Command failed: {' '.join(cmd)}")
+        if e.stdout:
+            details.append(f"stdout: {e.stdout.strip()}")
         if e.stderr:
-            print(f"stderr: {e.stderr}")
-
-        # Try alternative method using convert
-        print("\nTrying alternative export method...")
-        try:
-            alt_cmd = [
-                "mlx_lm.convert",
-                "--hf-path", str(model_path),
-                "-q",  # Quantize
-                "--export-gguf",
-            ]
-            subprocess.run(alt_cmd, check=True)
-            print(f"✓ Model exported using alternative method")
-            return str(output_path)
-        except Exception as alt_e:
-            print(f"Alternative method also failed: {alt_e}")
-            print("\nManual export command:")
-            print(f"  mlx_lm.fuse --model {model_path} --export-gguf --gguf-path {output_path}")
-            raise
+            details.append(f"stderr: {e.stderr.strip()}")
+        raise RuntimeError("\n".join(details))
 
 
 def get_training_config(

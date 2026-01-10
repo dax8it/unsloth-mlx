@@ -71,14 +71,19 @@ Local Mac (Unsloth-MLX)     →     Cloud GPU (Unsloth)
 | GRPO Training | ✅ Stable | **Multi-generation + reward** |
 | KTO/SimPO | ✅ Stable | Proper loss implementations |
 | Vision Models | ⚠️ Beta | Via mlx-vlm |
+| **GUI Interface** | ✅ New | Gradio-based web UI |
 | PyPI Package | 🔜 Soon | Install from source for now |
 
 ## Installation
 
 ```bash
 # From source (recommended for now)
-git clone https://github.com/ARahim3/unsloth-mlx.git
+git clone https://github.com/dax8it/unsloth-mlx.git
 cd unsloth-mlx
+
+# Create & activate a virtual environment (Python 3.12 recommended)
+python3.12 -m venv .venv
+source .venv/bin/activate
 
 # Using uv (recommended - faster and more reliable)
 uv pip install -e .
@@ -91,6 +96,37 @@ pip install -e .
 ```
 
 ## Quick Start
+
+### 🎯 With GUI (Easiest)
+
+Want to fine-tune without writing code? Use our Gradio-based GUI!
+
+```bash
+# Install GUI dependencies
+pip install -e .
+
+# Launch the GUI
+python gui.py
+
+# Open http://127.0.0.1:7860 in your browser
+```
+
+The GUI provides tabs for:
+- Loading models from HuggingFace
+- Chatting with models
+- Configuring LoRA adapters
+- SFT and RL training
+- Exporting models
+
+See [GUI_README.md](GUI_README.md) for detailed instructions.
+
+**Export notes:**
+- **Browse…** buttons are available in the Export tab to pick output locations without typing paths.
+- **Save LoRA Adapters** exports a small folder containing `adapters.safetensors` + `adapter_config.json`.
+- **Save Merged Model** produces a fused MLX model folder suitable for tools like LM Studio (MLX backend).
+- **GGUF export** is only supported by `mlx_lm` for model families: `llama`, `mistral`, `mixtral`. Some model types (e.g. `lfm2`) cannot be exported to GGUF via `mlx_lm`.
+
+### 💻 With Code
 
 ```python
 from unsloth_mlx import FastLanguageModel, SFTTrainer, SFTConfig
@@ -158,7 +194,7 @@ Check [`examples/`](examples/) for working code:
 - **Hardware**: Apple Silicon Mac (M1/M2/M3/M4/M5)
 - **OS**: macOS 13.0+ (15.0+ recommended for large models)
 - **Memory**: 16GB+ unified RAM (32GB+ for 7B+ models)
-- **Python**: 3.9+
+- **Python**: 3.9+ (3.12 recommended)
 
 ## Comparison with Unsloth
 
