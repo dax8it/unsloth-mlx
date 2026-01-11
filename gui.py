@@ -331,6 +331,107 @@ def generate_response(prompt: str, max_tokens: int, temperature: float, top_p: f
         return f"Error: {str(e)}"
 
 
+def _run_leap_bundle(cmd):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        out = (p.stdout or "").strip()
+        err = (p.stderr or "").strip()
+        combined = "\n".join([s for s in [out, err] if s])
+        if p.returncode != 0:
+            if combined:
+                return combined + f"\n(exit code {p.returncode})"
+            return f"Error: leap-bundle failed (exit code {p.returncode})"
+        return combined if combined else "✓ Success"
+    except FileNotFoundError:
+        return "Error: 'leap-bundle' not found. Install with: pip install leap-bundle"
+
+
+def _leap_login_if_provided(api_key: str):
+    api_key = str(api_key or "").strip()
+    if api_key == "":
+        return ""
+    return _run_leap_bundle(["leap-bundle", "login", api_key])
+
+
+def leap_validate_dir(model_dir: str):
+    model_dir = str(model_dir or "").strip()
+    if model_dir == "":
+        return "Error: Please provide a model directory"
+    return _run_leap_bundle(["leap-bundle", "validate", model_dir])
+
+
+def leap_create_request(model_dir: str, quantization: str, api_key: str):
+    model_dir = str(model_dir or "").strip()
+    if model_dir == "":
+        return "", "Error: Please provide a model directory"
+
+    login_out = _leap_login_if_provided(api_key)
+    if login_out.startswith("Error:"):
+        return "", login_out
+
+    cmd = ["leap-bundle", "create", model_dir, "--json"]
+    q = str(quantization or "").strip()
+    if q != "":
+        cmd.extend(["--quantization", q])
+
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        stdout = (p.stdout or "").strip()
+        stderr = (p.stderr or "").strip()
+        combined = "\n".join([s for s in [stdout, stderr] if s])
+        if p.returncode != 0:
+            if combined:
+                return "", combined + f"\n(exit code {p.returncode})"
+            return "", f"Error: leap-bundle create failed (exit code {p.returncode})"
+
+        request_id = ""
+        try:
+            obj = json.loads(stdout) if stdout else {}
+            request_id = str(obj.get("id") or obj.get("request_id") or obj.get("requestId") or "").strip()
+        except Exception:
+            request_id = ""
+
+        if request_id == "" and combined:
+            for token in combined.replace(":", " ").replace("#", " ").split():
+                if token.isdigit():
+                    request_id = token
+                    break
+
+        return request_id, combined if combined else "✓ Bundle request created"
+    except FileNotFoundError:
+        return "", "Error: 'leap-bundle' not found. Install with: pip install leap-bundle"
+
+
+def leap_check_status(request_id: str, api_key: str):
+    request_id = str(request_id or "").strip()
+    if request_id == "":
+        return "Error: Please provide a request ID"
+
+    login_out = _leap_login_if_provided(api_key)
+    if login_out.startswith("Error:"):
+        return login_out
+
+    return _run_leap_bundle(["leap-bundle", "list", request_id, "--json"])
+
+
+def leap_download_request(request_id: str, output_dir: str, api_key: str):
+    request_id = str(request_id or "").strip()
+    if request_id == "":
+        return "Error: Please provide a request ID"
+
+    output_dir = str(output_dir or "").strip()
+    if output_dir == "":
+        return "Error: Please provide an output directory"
+
+    login_out = _leap_login_if_provided(api_key)
+    if login_out.startswith("Error:"):
+        return login_out
+
+    return _run_leap_bundle(
+        ["leap-bundle", "download", request_id, "--output-path", output_dir]
+    )
+
+
 def _first_selected_path(selection):
     if selection is None:
         return ""
@@ -1607,6 +1708,59 @@ def build_ui():
                         export_gguf_btn = gr.Button("Export to GGUF", variant="primary")
                         gguf_status = gr.Textbox(label="Status", value="", interactive=False)
 
+                gr.Markdown("---")
+
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("#### LEAP GGUF Bundling")
+                        leap_model_dir = gr.Textbox(
+                            label="Model Directory (HF checkpoint folder)",
+                            value="./merged_model",
+                            placeholder="e.g., ./merged_model",
+                            info="Must contain config.json + one or more .safetensors files",
+                        )
+                        browse_leap_model_dir_btn = gr.Button("Browse…")
+
+                        leap_quantization = gr.Dropdown(
+                            label="LEAP Quantization",
+                            choices=["Q4_K_M", "Q5_K_M", "Q8_0", "F16"],
+                            value="Q4_K_M",
+                        )
+
+                        leap_api_key = gr.Textbox(
+                            label="LEAP API Key (Optional)",
+                            type="password",
+                            placeholder="If blank, assumes you already ran: leap-bundle login",
+                        )
+
+                        with gr.Row():
+                            leap_validate_btn = gr.Button("Validate Directory")
+                            leap_create_btn = gr.Button("Create Bundle Request", variant="primary")
+
+                        leap_request_id = gr.Textbox(
+                            label="Bundle Request ID",
+                            value="",
+                            placeholder="Filled after Create, or paste an existing ID",
+                        )
+
+                        with gr.Row():
+                            leap_status_btn = gr.Button("Check Status")
+                            leap_download_btn = gr.Button("Download GGUF")
+
+                        leap_download_dir = gr.Textbox(
+                            label="Download Output Directory",
+                            value="./leap_downloads",
+                            placeholder="e.g., ./leap_downloads",
+                        )
+                        browse_leap_download_dir_btn = gr.Button("Browse…")
+
+                        leap_output = gr.Textbox(
+                            label="LEAP Output",
+                            value="",
+                            lines=10,
+                            interactive=False,
+                        )
+
                 browse_adapters_btn.click(
                     fn=_pick_directory_dialog,
                     inputs=[adapter_output],
@@ -1627,6 +1781,18 @@ def build_ui():
                     outputs=[gguf_output],
                 )
 
+                browse_leap_model_dir_btn.click(
+                    fn=_pick_directory_dialog,
+                    inputs=[leap_model_dir],
+                    outputs=[leap_model_dir],
+                )
+
+                browse_leap_download_dir_btn.click(
+                    fn=_pick_directory_dialog,
+                    inputs=[leap_download_dir],
+                    outputs=[leap_download_dir],
+                )
+
                 save_adapters_btn.click(
                     fn=save_adapters, inputs=[adapter_output], outputs=[adapter_status]
                 )
@@ -1639,11 +1805,42 @@ def build_ui():
                     fn=export_gguf, inputs=[gguf_output, quantization], outputs=[gguf_status]
                 )
 
+                leap_validate_btn.click(
+                    fn=leap_validate_dir,
+                    inputs=[leap_model_dir],
+                    outputs=[leap_output],
+                )
+
+                leap_create_btn.click(
+                    fn=leap_create_request,
+                    inputs=[leap_model_dir, leap_quantization, leap_api_key],
+                    outputs=[leap_request_id, leap_output],
+                )
+
+                leap_status_btn.click(
+                    fn=leap_check_status,
+                    inputs=[leap_request_id, leap_api_key],
+                    outputs=[leap_output],
+                )
+
+                leap_download_btn.click(
+                    fn=leap_download_request,
+                    inputs=[leap_request_id, leap_download_dir, leap_api_key],
+                    outputs=[leap_output],
+                )
+
                 gr.Markdown("""
                 **Export Options:**
                 - **Adapters**: Just the LoRA weights (small file, fast to save)
                 - **Merged Model**: Full model in HuggingFace format (compatible with transformers, vLLM)
                 - **GGUF**: For llama.cpp, Ollama, GPT4All (CPU inference)
+
+                **LEAP GGUF Bundling:**
+                - Install the CLI: `pip install leap-bundle`
+                - Authenticate (optional in this GUI if you paste an API key): `leap-bundle login <api-key>`
+                - Input directory must contain `config.json` and one or more `.safetensors` files.
+                - Recommended flow: **Save Merged Model** → **Validate Directory** → **Create Bundle Request** → **Check Status** → **Download GGUF**.
+                - The downloaded `.gguf` can be loaded on iOS with LEAP SDK using `Leap.load(url:)`.
                 """)
 
             with gr.Tab("🧪 Tests"):
@@ -1747,6 +1944,13 @@ def build_ui():
                 - **Save LoRA Adapters**: saves the adapter weights (small, portable)
                 - **Save Merged Model**: exports a fused Hugging Face-style folder
                 - **Export to GGUF**: for llama.cpp / Ollama-style runtimes (model-family dependent)
+                - **LEAP GGUF Bundling**: uses Liquid AI's `leap-bundle` service to create a `.gguf` for LEAP-supported architectures (LFM2 / LFM2-VL / Qwen)
+
+                **LEAP GGUF flow (recommended):**
+                1. Install `leap-bundle`: `pip install leap-bundle`
+                2. (Optional) authenticate: `leap-bundle login <api-key>`
+                3. In the **💾 Export** tab: **Save Merged Model** → **Validate Directory** → **Create Bundle Request** → **Check Status** → **Download GGUF**
+                4. On iOS, load the downloaded `.gguf` with LEAP SDK via `Leap.load(url:)`.
                 
                 #### Tips
                 

@@ -71,6 +71,27 @@ The GUI will open at `http://127.0.0.1:7860` in your browser.
   - GGUF export is only supported by `mlx_lm` for model families: `llama`, `mistral`, `mixtral`.
   - Some models (e.g. `model_type: lfm2`) cannot be exported to GGUF with `mlx_lm`.
 
+## LEAP GGUF Export (Liquid AI)
+
+If you're fine-tuning a LEAP-supported base architecture (LFM2 / LFM2-VL / Qwen), you can bundle an iOS-ready GGUF using Liquid AI's `leap-bundle` service.
+
+1. Install the CLI:
+```bash
+pip install leap-bundle
+```
+
+2. Authenticate (optional if you paste an API key in the GUI):
+```bash
+leap-bundle login <api-key>
+```
+
+3. In the GUI **Export** tab:
+- Run **Save Merged Model** (produces the checkpoint folder)
+- In **LEAP GGUF Bundling**, click **Validate Directory**
+- Click **Create Bundle Request** and wait for processing
+- Click **Check Status** until the request is completed
+- Click **Download GGUF** to save the `.gguf` to your chosen folder
+
 ## LM Studio
 
 LM Studio can load MLX models, but it generally expects a "standard" MLX model folder (no LoRA parameters like `lora_a`/`lora_b`).
