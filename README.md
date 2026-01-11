@@ -151,6 +151,12 @@ See [GUI_README.md](GUI_README.md) for detailed instructions.
 - **Save Merged Model** produces a fused MLX model folder suitable for tools like LM Studio (MLX backend).
 - **GGUF export** is only supported by `mlx_lm` for model families: `llama`, `mistral`, `mixtral`. Some model types (e.g. `lfm2`) cannot be exported to GGUF via `mlx_lm`.
 
+ **LEAP GGUF export (Liquid AI):**
+ - If you're using LEAP-supported model architectures (LFM2 / LFM2-VL / Qwen), you can create an iOS-ready `.gguf` using the **LEAP GGUF Bundling** section in the GUI.
+ - Install the bundling CLI: `pip install leap-bundle` (and authenticate with `leap-bundle login <api-key>`).
+ - Recommended flow: **Save Merged Model** → **LEAP: Validate Directory** → **Create Bundle Request** → **Download GGUF**.
+ - On iOS, you can load the downloaded `.gguf` locally with LEAP SDK via `Leap.load(url:)`.
+
 **Dataset notes (SFT):**
 - SFT training expects JSONL rows in the `{"messages": [...]}` chat format.
 - If your dataset is not already in `messages` format, use the GUI button **Convert to messages JSONL** in the **SFT Training** tab.
