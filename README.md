@@ -151,6 +151,16 @@ See [GUI_README.md](GUI_README.md) for detailed instructions.
 - **Save Merged Model** produces a fused MLX model folder suitable for tools like LM Studio (MLX backend).
 - **GGUF export** is only supported by `mlx_lm` for model families: `llama`, `mistral`, `mixtral`. Some model types (e.g. `lfm2`) cannot be exported to GGUF via `mlx_lm`.
 
+**Dataset notes (SFT):**
+- SFT training expects JSONL rows in the `{"messages": [...]}` chat format.
+- If your dataset is not already in `messages` format, use the GUI button **Convert to messages JSONL** in the **SFT Training** tab.
+- Supported input schemas for conversion:
+  - `messages`: already-correct chat rows
+  - `conversations`: ShareGPT-style (`from/value`) and variants
+  - Alpaca-style: `instruction` + optional `input` + `output`
+  - Prompt/completion: `prompt` + `completion` (or `response`)
+- Converted datasets are written to `data/converted/` and the GUI auto-fills the dataset path to the converted file.
+
 ### 💻 With Code
 
 ```python

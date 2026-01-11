@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datasets import load_dataset
+from unsloth_mlx.chat_templates import convert_dataset_to_messages_jsonl
 from unsloth_mlx import (
     FastLanguageModel,
     SFTTrainer,
@@ -201,6 +202,17 @@ def validate_sft_dataset(upload_obj, dataset_path_text: str, preview_rows: int =
         )
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=2)
+
+
+def convert_sft_dataset_to_messages(upload_obj, dataset_path_text: str):
+    try:
+        path = _choose_dataset_path(upload_obj, dataset_path_text)
+        dataset = load_local_or_hub_dataset(path)
+        summary = convert_dataset_to_messages_jsonl(dataset)
+        out_path = summary.get("output")
+        return None, str(out_path or ""), json.dumps(summary, indent=2)
+    except Exception as e:
+        return None, str(dataset_path_text or ""), json.dumps({"error": str(e)}, indent=2)
 
 
 def validate_preference_dataset(upload_obj, dataset_path_text: str, preview_rows: int = 5):
@@ -1306,6 +1318,7 @@ def build_ui():
 
                         with gr.Row():
                             validate_sft_btn = gr.Button("Validate / Preview Dataset")
+                            convert_sft_btn = gr.Button("Convert to messages JSONL")
                             preview_rows_sft = gr.Slider(
                                 label="Preview Rows",
                                 minimum=1,
@@ -1412,6 +1425,12 @@ def build_ui():
                     fn=validate_sft_dataset,
                     inputs=[dataset_sft, dataset_sft_path, preview_rows_sft],
                     outputs=[validate_sft_output],
+                )
+
+                convert_sft_btn.click(
+                    fn=convert_sft_dataset_to_messages,
+                    inputs=[dataset_sft, dataset_sft_path],
+                    outputs=[dataset_sft, dataset_sft_path, validate_sft_output],
                 )
 
             # ========== Tab 5: RL Training ==========
@@ -1672,6 +1691,8 @@ def build_ui():
                 
                 #### Datasets
                 Use **Validate / Preview Dataset** to confirm your JSONL format and preview a few rows.
+                If your SFT dataset isn't already in `{"messages": [...]}` format, click **Convert to messages JSONL** in the **SFT Training** tab.
+                Converted datasets are written to `data/converted/` and the GUI will auto-fill the dataset path to the converted file.
                 
                 #### Dataset Formats
                 
@@ -1682,6 +1703,12 @@ def build_ui():
                     {"role": "assistant", "content": "Python is a programming language..."}
                 ]}
                 ```
+
+                **SFT conversion (supported input schemas):**
+                - `messages`: already-correct chat rows
+                - `conversations`: ShareGPT-style (`from/value`) and variants
+                - Alpaca-style: `instruction` + optional `input` + `output`
+                - Prompt/completion: `prompt` + `completion` (or `response`)
                 
                 **DPO (Preference):**
                 ```json

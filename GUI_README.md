@@ -53,6 +53,7 @@ The GUI will open at `http://127.0.0.1:7860` in your browser.
 
 4. **Fine-tune**: Go to "SFT Training" or "RL Training"
    - Upload your dataset (JSONL format)
+   - If your SFT dataset isn't already in `{"messages": [...]}` format, click **Convert to messages JSONL** (SFT tab)
    - Configure training parameters
    - Click "Start Training"
 
@@ -86,6 +87,13 @@ LM Studio can load MLX models, but it generally expects a "standard" MLX model f
     {"role": "assistant", "content": "Python is a programming language..."}
 ]}
 ```
+
+If your SFT dataset is not in `messages` format, the GUI can convert common formats into `messages` JSONL:
+- `conversations` (ShareGPT-style `from/value`)
+- Alpaca-style: `instruction` + optional `input` + `output`
+- Prompt/completion: `prompt` + `completion` (or `response`)
+
+Converted datasets are written to `data/converted/` and the GUI auto-fills the dataset path to the converted file.
 
 ### DPO (Preference)
 ```json
