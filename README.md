@@ -153,7 +153,8 @@ See [GUI_README.md](GUI_README.md) for detailed instructions.
 
  **LEAP GGUF export (Liquid AI):**
  - If you're using LEAP-supported model architectures (LFM2 / LFM2-VL / Qwen), you can create an iOS-ready `.gguf` using the **LEAP GGUF Bundling** section in the GUI.
- - Install the bundling CLI: `pip install leap-bundle` (and authenticate with `leap-bundle login <api-key>`).
+ - Install the bundling CLI: `pip install leap-bundle`.
+ - Authenticate once with `leap-bundle login <api-key>` (credentials are persisted to `~/.liquid-leap`). After that you can leave the GUI API key field blank.
  - Recommended flow: **Save Merged Model** → **LEAP: Validate Directory** → **Create Bundle Request** → **Download GGUF**.
  - On iOS, you can load the downloaded `.gguf` locally with LEAP SDK via `Leap.load(url:)`.
 

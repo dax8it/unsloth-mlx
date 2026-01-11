@@ -85,6 +85,8 @@ pip install leap-bundle
 leap-bundle login <api-key>
 ```
 
+This is a one-time step on your machine. `leap-bundle` stores credentials in `~/.liquid-leap`, so after logging in you can leave the GUI API key field blank.
+
 3. In the GUI **Export** tab:
 - Run **Save Merged Model** (produces the checkpoint folder)
 - In **LEAP GGUF Bundling**, click **Validate Directory**
