@@ -1837,7 +1837,7 @@ def build_ui():
 
                 **LEAP GGUF Bundling:**
                 - Install the CLI: `pip install leap-bundle`
-                - Authenticate (optional in this GUI if you paste an API key): `leap-bundle login <api-key>`
+                - Authenticate once with `leap-bundle login <api-key>` (credentials are persisted to `~/.liquid-leap`). After that you can leave the GUI API key field blank.
                 - Input directory must contain `config.json` and one or more `.safetensors` files.
                 - Recommended flow: **Save Merged Model** → **Validate Directory** → **Create Bundle Request** → **Check Status** → **Download GGUF**.
                 - The downloaded `.gguf` can be loaded on iOS with LEAP SDK using `Leap.load(url:)`.
@@ -1948,7 +1948,7 @@ def build_ui():
 
                 **LEAP GGUF flow (recommended):**
                 1. Install `leap-bundle`: `pip install leap-bundle`
-                2. (Optional) authenticate: `leap-bundle login <api-key>`
+                2. Authenticate once: `leap-bundle login <api-key>` (credentials are persisted to `~/.liquid-leap`)
                 3. In the **💾 Export** tab: **Save Merged Model** → **Validate Directory** → **Create Bundle Request** → **Check Status** → **Download GGUF**
                 4. On iOS, load the downloaded `.gguf` with LEAP SDK via `Leap.load(url:)`.
                 
