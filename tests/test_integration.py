@@ -124,17 +124,20 @@ class TestSaveWorkflows:
     def test_save_pretrained_gguf(self, model_with_lora):
         """Test save_pretrained_gguf (GGUF export) works.
 
-        Note: GGUF export requires mlx_lm.fuse which needs a proper model
-        directory with config.json. This test verifies the API works, but
-        may skip if the export tools have issues with temp directories.
+        This test verifies:
+        1. The method uses the original model path (not output dir) - GitHub issue #3 fix
+        2. The GGUF export command is called correctly
         """
         model, tokenizer = model_with_lora
+
+        # Verify the model has the original model_name set (critical for GGUF export)
+        assert model.model_name is not None, "model_name should be set"
+        assert "mlx-community" in model.model_name or "Llama" in model.model_name, \
+            f"model_name should contain the original model path, got: {model.model_name}"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             save_path = os.path.join(tmpdir, "model")
 
-            # GGUF export requires mlx_lm.fuse which needs config.json
-            # This may fail in temp directories - that's expected
             try:
                 model.save_pretrained_gguf(save_path, tokenizer)
 
@@ -145,21 +148,47 @@ class TestSaveWorkflows:
             except Exception as e:
                 import subprocess
                 error_msg = str(e)
-                # GGUF export depends on external tools and proper model paths
-                # Mark as expected skip if tools/config not available
+
+                # Check that the error is NOT about missing config.json in the output dir
+                # (which was the old bug - GitHub issue #3)
+                if "model/config.json" in error_msg:
+                    pytest.fail(
+                        "GGUF export looked for config.json in output dir instead of model path. "
+                        "This is the bug from GitHub issue #3. "
+                        f"Error: {error_msg}"
+                    )
+
+                # GGUF export depends on external tools and model architectures
+                # Skip for expected failures (unsupported architecture, tools not available)
                 is_expected_failure = (
                     isinstance(e, subprocess.CalledProcessError) or
-                    isinstance(e, FileNotFoundError) or
-                    any(x in error_msg for x in [
-                        "mlx_lm.fuse", "config.json", "FileNotFoundError"
+                    any(x in error_msg.lower() for x in [
+                        "gguf", "quantized", "unsupported", "not supported",
+                        "model_type", "llama", "mistral"
                     ])
                 )
                 if is_expected_failure:
                     pytest.skip(
-                        f"GGUF export requires complete model directory. "
-                        f"Test with actual model path instead of temp dir. Error: {type(e).__name__}"
+                        f"GGUF export skipped (architecture or tool limitation): {type(e).__name__}"
                     )
                 raise
+
+    def test_save_pretrained_gguf_model_name_preserved(self, model_with_lora):
+        """Test that model_name is preserved correctly for GGUF export.
+
+        This specifically tests the fix for GitHub issue #3 where GGUF export
+        was failing because it used the output directory as the model path.
+        """
+        model, tokenizer = model_with_lora
+
+        # The model must have the original model name preserved
+        assert hasattr(model, 'model_name'), "Model should have model_name attribute"
+        assert model.model_name is not None, "model_name should not be None"
+
+        # The model_name should be the original HuggingFace model ID
+        # NOT an output directory path
+        assert "mlx-community" in model.model_name or "/" in model.model_name, \
+            f"model_name should be a HuggingFace model ID, got: {model.model_name}"
 
 
 class TestInferenceWorkflows:

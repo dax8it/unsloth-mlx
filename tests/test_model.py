@@ -221,3 +221,87 @@ class TestMLXModelWrapper:
 
         assert model.inference_mode is True
         assert model.use_cache is True
+
+
+class TestGGUFExportFix:
+    """Test cases for GGUF export fix (GitHub issue #3).
+
+    The issue was that save_pretrained_gguf was using the output directory
+    as the model path, causing FileNotFoundError for config.json.
+    The fix ensures we use the original model path (model_name).
+    """
+
+    @pytest.fixture
+    def model_with_lora(self):
+        """Fixture providing a model with LoRA configured."""
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name="mlx-community/Llama-3.2-1B-Instruct-4bit",
+            max_seq_length=512,
+            load_in_4bit=True,
+        )
+        model = FastLanguageModel.get_peft_model(model, r=8)
+        return model, tokenizer
+
+    def test_model_name_preserved(self, model_with_lora):
+        """Test that model_name is preserved after loading."""
+        model, _ = model_with_lora
+
+        assert model.model_name == "mlx-community/Llama-3.2-1B-Instruct-4bit"
+
+    def test_model_name_not_none(self, model_with_lora):
+        """Test that model_name is not None (required for GGUF export)."""
+        model, _ = model_with_lora
+
+        assert model.model_name is not None, \
+            "model_name should not be None - required for GGUF export"
+
+    def test_model_config_preserved(self, model_with_lora):
+        """Test that model config is preserved for GGUF export."""
+        model, _ = model_with_lora
+
+        # Config should be stored from mlx_load with return_config=True
+        assert hasattr(model, 'config'), "Model should have config attribute"
+        assert model.config is not None, "Config should not be None"
+
+    def test_save_pretrained_gguf_requires_model_name(self):
+        """Test that save_pretrained_gguf fails gracefully without model_name."""
+        from unsloth_mlx.model import MLXModelWrapper
+
+        # Create a wrapper without model_name
+        class MockModel:
+            pass
+
+        wrapper = MLXModelWrapper(
+            model=MockModel(),
+            tokenizer=None,
+            max_seq_length=512,
+            model_name=None,  # No model name!
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            wrapper.save_pretrained_gguf("output", None)
+
+        assert "model_name" in str(excinfo.value).lower()
+
+    def test_adapter_path_tracking(self, model_with_lora):
+        """Test that adapter path can be set and retrieved."""
+        model, _ = model_with_lora
+
+        # Set adapter path
+        model.set_adapter_path("/path/to/adapters")
+
+        assert model.get_adapter_path() is not None
+        assert str(model.get_adapter_path()) == "/path/to/adapters"
+
+    def test_lora_applied_tracking(self, model_with_lora):
+        """Test that _lora_applied flag is tracked correctly."""
+        model, _ = model_with_lora
+
+        # After get_peft_model, LoRA is configured but not applied yet
+        assert model.lora_enabled is True
+        assert model._lora_applied is False
+
+        # Apply LoRA
+        model._apply_lora()
+
+        assert model._lora_applied is True

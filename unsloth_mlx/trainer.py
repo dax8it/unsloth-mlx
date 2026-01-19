@@ -305,10 +305,13 @@ def export_to_gguf(
 
     Args:
         model_path: Path to the base model or HuggingFace model ID
-        output_path: Path for output GGUF file (defaults to model_path/model.gguf)
+            (e.g., "mlx-community/Llama-3.2-1B-Instruct-4bit" or "./my_model")
+        output_path: Path for output GGUF file (defaults to ./model.gguf)
         quantization: Quantization type (q4_k_m, q5_k_m, q8_0, f16, etc.)
+            Note: mlx_lm exports in fp16 precision
         adapter_path: Path to LoRA adapters to fuse before export
-        **kwargs: Additional export options
+        **kwargs: Additional export options:
+            - dequantize: bool - Dequantize model before export (required for quantized models)
 
     Examples:
         >>> # Export base model to GGUF
@@ -320,15 +323,28 @@ def export_to_gguf(
         ...     adapter_path="./adapters",
         ...     output_path="my-model.gguf",
         ... )
+
+    Note:
+        GGUF export is only supported for Llama, Mistral, and Mixtral architectures.
+        Quantized models need dequantize=True to export properly.
     """
     import subprocess
 
-    model_path = Path(model_path) if not model_path.startswith(('mlx-', 'meta-', 'mistral')) else model_path
+    # Determine if model_path is a HuggingFace model ID or local path
+    # HF model IDs typically contain "/" but don't exist as local paths
+    model_path_str = str(model_path)
+    is_hf_model = (
+        "/" in model_path_str and
+        not Path(model_path_str).exists()
+    )
+
+    # Keep as string for HF models, convert to Path for local paths
+    if not is_hf_model:
+        model_path = Path(model_path_str)
+
+    # Handle output path
     if output_path is None:
-        if isinstance(model_path, Path):
-            output_path = model_path / "model.gguf"
-        else:
-            output_path = Path("./model.gguf")
+        output_path = Path("./model.gguf")
     else:
         output_path = Path(output_path)
 
@@ -353,21 +369,33 @@ def export_to_gguf(
     if adapter_path:
         cmd.extend(["--adapter-path", str(adapter_path)])
 
-    # Add de-quantize flag for better quality (optional)
-    if kwargs.get('de_quantize', False):
-        cmd.append("--de-quantize")
+    # Add dequantize flag for quantized models (required for proper GGUF export)
+    if kwargs.get('dequantize', False) or kwargs.get('de_quantize', False):
+        cmd.append("--dequantize")
 
     print(f"\nRunning: {' '.join(cmd)}")
 
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout)
         print(f"✓ Model exported to {output_path}")
         return str(output_path)
 
     except subprocess.CalledProcessError as e:
-        print(f"Error during GGUF export: {e}")
-        if e.stderr:
-            print(f"stderr: {e.stderr}")
+        error_msg = e.stderr if e.stderr else str(e)
+        print(f"Error during GGUF export: {error_msg}")
+
+        # Provide helpful error messages
+        if "config.json" in error_msg.lower() or "FileNotFoundError" in str(e):
+            print("\n⚠️  Model config not found. This usually means:")
+            print("   1. The model path is incorrect")
+            print("   2. The model hasn't been downloaded yet")
+            print(f"\n   Try loading the model first with mlx_lm:")
+            print(f"   python -c \"from mlx_lm import load; load('{model_path}')\"")
+        elif "quantized" in error_msg.lower():
+            print("\n⚠️  Quantized model detected. Try with dequantize=True:")
+            print(f"   export_to_gguf('{model_path}', dequantize=True)")
 
         # Try alternative method using convert
         print("\nTrying alternative export method...")

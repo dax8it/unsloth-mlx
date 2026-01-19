@@ -13,7 +13,7 @@ Supported Training Methods:
 - VLM (Vision Language Model) fine-tuning
 """
 
-__version__ = "0.3.2"  # Added to_sharegpt(), column mapping, HFDatasetConfig
+__version__ = "0.3.3"  # Fixed GGUF export (GitHub issue #3)
 
 from unsloth_mlx.model import FastLanguageModel
 from unsloth_mlx.trainer import (

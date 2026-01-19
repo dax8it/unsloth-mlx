@@ -652,14 +652,24 @@ class MLXModelWrapper:
         """
         Save model in GGUF format for llama.cpp, Ollama, etc.
 
+        This method exports the model (optionally with fused LoRA adapters) to GGUF format
+        for use with llama.cpp, Ollama, LM Studio, and other GGUF-compatible tools.
+
         Args:
             output_dir: Directory/filename for GGUF file
             tokenizer: Tokenizer
             quantization_method: GGUF quantization ("q4_k_m", "q5_k_m", "q8_0", etc.)
-            **kwargs: Additional options
+                               Note: mlx_lm exports in fp16; this parameter is for documentation
+            **kwargs: Additional options including:
+                - de_quantize: Whether to dequantize the model before export (for quantized models)
 
         Example:
             >>> model.save_pretrained_gguf("model", tokenizer, quantization_method="q4_k_m")
+
+        Note:
+            - GGUF export requires the base model to be Llama, Mistral, or Mixtral architecture
+            - Quantized models may need de_quantize=True for proper export
+            - The model is exported in fp16 precision
         """
         from unsloth_mlx.trainer import export_to_gguf
         from pathlib import Path
@@ -668,11 +678,47 @@ class MLXModelWrapper:
         if not output_path.suffix:
             output_path = output_path / "model.gguf"
 
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Get the original model path/name - this is what mlx_lm.fuse needs
+        model_path = self.model_name
+        if model_path is None:
+            raise ValueError(
+                "Cannot export to GGUF: model_name is not set. "
+                "The model must be loaded with FastLanguageModel.from_pretrained() "
+                "to track the original model path."
+            )
+
+        # Check for adapter path if LoRA was applied
+        adapter_path = None
+        if self._lora_applied:
+            if self._adapter_path:
+                adapter_path = str(self._adapter_path)
+            else:
+                # Check common adapter locations
+                common_paths = [
+                    Path("./adapters"),
+                    Path("./lora_finetuned/adapters"),
+                    Path("./outputs/adapters"),
+                ]
+                for path in common_paths:
+                    if (path / "adapters.safetensors").exists():
+                        adapter_path = str(path)
+                        break
+
+            if adapter_path:
+                print(f"  LoRA adapters will be fused from: {adapter_path}")
+            else:
+                print("  Warning: LoRA was applied but no adapter path found.")
+                print("  Export will use base model only. Train and save adapters first.")
+
         print(f"Exporting to GGUF format...")
         export_to_gguf(
-            str(output_path.parent),
+            model_path,  # Use original model path, not output directory
             output_path=str(output_path),
             quantization=quantization_method,
+            adapter_path=adapter_path,
             **kwargs
         )
 
