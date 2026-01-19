@@ -70,7 +70,7 @@ Local Mac (Unsloth-MLX)     →     Cloud GPU (Unsloth)
 
 ## Project Status
 
-> 🚀 **v0.3.2** - Full dataset handling + multi-turn conversations!
+> 🚀 **v0.3.3** - Fixed GGUF export bug + full dataset handling!
 
 | Feature | Status | Notes |
 |---------|--------|-------|
