@@ -49,11 +49,21 @@ def _save_adapters_and_config(model, adapter_path: Path):
     adapter_config.json is created alongside adapters.safetensors.
     """
     try:
-        from mlx_lm.tuner.utils import save_adapters
+        from mlx.utils import tree_flatten
         actual_model = model.model if hasattr(model, 'model') else model
         adapter_file = adapter_path / "adapters.safetensors"
         adapter_path.mkdir(parents=True, exist_ok=True)
-        save_adapters(actual_model, str(adapter_file))
+
+        # Save adapter weights (trainable parameters only)
+        adapter_weights = dict(tree_flatten(actual_model.trainable_parameters()))
+        mx.save_safetensors(str(adapter_file), adapter_weights)
+
+        # Determine number of layers in the model
+        num_layers = None
+        if hasattr(actual_model, 'layers'):
+            num_layers = len(actual_model.layers)
+        elif hasattr(actual_model, 'model') and hasattr(actual_model.model, 'layers'):
+            num_layers = len(actual_model.model.layers)
 
         # Save adapter_config.json
         lora_config = {}
@@ -64,6 +74,8 @@ def _save_adapters_and_config(model, adapter_path: Path):
         alpha = lora_config.get('lora_alpha', 16)
 
         adapter_config = {
+            "fine_tune_type": "lora",
+            "num_layers": num_layers,
             "lora_parameters": {
                 "rank": r,
                 "scale": alpha / r,

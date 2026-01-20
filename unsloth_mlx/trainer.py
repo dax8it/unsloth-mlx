@@ -351,6 +351,24 @@ def export_to_gguf(
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Check if model appears to be quantized (warn user about mlx_lm limitation)
+    quantized_indicators = ['4bit', '8bit', '3bit', '2bit', '-q4', '-q8', 'int4', 'int8', 'bnb']
+    model_name_lower = model_path_str.lower()
+    is_likely_quantized = any(ind in model_name_lower for ind in quantized_indicators)
+
+    if is_likely_quantized and not kwargs.get('dequantize', False):
+        print("\n" + "=" * 70)
+        print("⚠️  WARNING: Quantized model detected!")
+        print("=" * 70)
+        print(f"Model '{model_path}' appears to be quantized.")
+        print("GGUF export from quantized models is NOT supported by mlx_lm.")
+        print("This is an upstream limitation: https://github.com/ml-explore/mlx-lm/issues/353")
+        print("\nOptions:")
+        print("  1. Use dequantize=True (creates large fp16, re-quantize with llama.cpp)")
+        print("  2. Use a non-quantized base model for training")
+        print("  3. Use save_pretrained_merged() for MLX-only inference")
+        print("=" * 70 + "\n")
+
     print(f"Exporting model to GGUF format...")
     print(f"  Model: {model_path}")
     print(f"  Output: {output_path}")

@@ -75,8 +75,8 @@ Local Mac (Unsloth-MLX)     →     Cloud GPU (Unsloth)
 | Feature | Status | Notes |
 |---------|--------|-------|
 | SFT Training | ✅ Stable | Native MLX training |
-| Model Loading | ✅ Stable | Any HuggingFace model |
-| Save/Export | ✅ Stable | HF format, GGUF |
+| Model Loading | ✅ Stable | Any HuggingFace model (quantized & non-quantized) |
+| Save/Export | ✅ Stable | HF format, GGUF ([see limitations](#known-limitations)) |
 | DPO Training | ✅ Stable | **Full DPO loss** |
 | ORPO Training | ✅ Stable | **Full ORPO loss** |
 | GRPO Training | ✅ Stable | **Multi-generation + reward** |
@@ -145,8 +145,12 @@ trainer.train()
 # Save (same API as Unsloth!)
 model.save_pretrained("lora_model")  # Adapters only
 model.save_pretrained_merged("merged", tokenizer)  # Full model
-model.save_pretrained_gguf("model", tokenizer, quantization_method="q4_k_m")  # GGUF
+model.save_pretrained_gguf("model", tokenizer)  # GGUF (see note below)
 ```
+
+> [!NOTE]
+> **GGUF Export**: Works with non-quantized base models. If using a 4-bit model (like above),
+> see [Known Limitations](#known-limitations) for workarounds.
 
 ### Chat Templates & Response-Only Training
 
@@ -202,6 +206,46 @@ Check [`examples/`](examples/) for working code:
 | Memory | VRAM (limited) | Unified (up to 512GB) |
 | API | Original | 100% Compatible |
 | Best For | Production training | Local dev, large models |
+
+## Known Limitations
+
+### GGUF Export from Quantized Models
+
+**The Issue**: GGUF export (`save_pretrained_gguf`) doesn't work directly with quantized (4-bit) base models. This is a [known limitation in mlx-lm](https://github.com/ml-explore/mlx-lm/issues/353), not unsloth-mlx.
+
+**What Works**:
+- ✅ Training with quantized models (QLoRA) - works perfectly
+- ✅ Saving adapters (`save_pretrained`) - works
+- ✅ Saving merged model (`save_pretrained_merged`) - works
+- ✅ Inference with trained model - works
+- ❌ GGUF export from quantized base model - mlx-lm limitation
+
+**Workarounds**:
+
+1. **Use a non-quantized base model** (recommended for GGUF export):
+   ```python
+   # Use fp16 model instead of 4-bit
+   model, tokenizer = FastLanguageModel.from_pretrained(
+       model_name="mlx-community/Llama-3.2-1B-Instruct",  # NOT -4bit
+       max_seq_length=2048,
+       load_in_4bit=False,  # Train in fp16
+   )
+   # Train normally, then export
+   model.save_pretrained_gguf("model", tokenizer)  # Works!
+   ```
+
+2. **Dequantize during export** (results in large fp16 file):
+   ```python
+   model.save_pretrained_gguf("model", tokenizer, dequantize=True)
+   # Then re-quantize with llama.cpp:
+   # ./llama-quantize model.gguf model-q4_k_m.gguf Q4_K_M
+   ```
+
+3. **Skip GGUF, use MLX format**: If you only need the model for MLX/Python inference, just use `save_pretrained_merged()` - no GGUF needed.
+
+**Related Issues**:
+- [mlx-lm #353](https://github.com/ml-explore/mlx-lm/issues/353) - MLX to GGUF conversion
+- [mlx-examples #1382](https://github.com/ml-explore/mlx-examples/issues/1382) - Quantized to GGUF
 
 ## Contributing
 

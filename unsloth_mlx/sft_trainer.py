@@ -262,7 +262,12 @@ class SFTTrainer:
         self.save_steps = save_steps
         self.logging_steps = logging_steps
         self.output_dir = Path(output_dir)
-        self.adapter_path = Path(adapter_path)
+        # Make adapter_path relative to output_dir if it's a relative path
+        adapter_path = Path(adapter_path)
+        if not adapter_path.is_absolute():
+            self.adapter_path = self.output_dir / adapter_path
+        else:
+            self.adapter_path = adapter_path
 
         # LoRA config
         if hasattr(model, 'lora_config') and model.lora_config:
@@ -365,12 +370,24 @@ class SFTTrainer:
         if hasattr(self.model, 'lora_config') and self.model.lora_config:
             lora_config = self.model.lora_config.copy()
 
+        # Determine number of layers in the model
+        num_layers = None
+        actual_model = self.model.model if hasattr(self.model, 'model') else self.model
+        if hasattr(actual_model, 'layers'):
+            num_layers = len(actual_model.layers)
+        elif hasattr(actual_model, 'model') and hasattr(actual_model.model, 'layers'):
+            num_layers = len(actual_model.model.layers)
+
+        r = lora_config.get('r', self.lora_r)
+        alpha = lora_config.get('lora_alpha', self.lora_alpha)
+
         # Build adapter config in mlx_lm format
         adapter_config = {
-            "lora_layers": getattr(self, 'lora_layers', None),  # Number of layers with LoRA
+            "fine_tune_type": "lora",
+            "num_layers": num_layers,
             "lora_parameters": {
-                "rank": lora_config.get('r', self.lora_r),
-                "scale": lora_config.get('lora_alpha', self.lora_alpha) / lora_config.get('r', self.lora_r),
+                "rank": r,
+                "scale": alpha / r,
                 "dropout": lora_config.get('lora_dropout', 0.0),
             },
         }

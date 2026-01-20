@@ -69,11 +69,13 @@ htmlcov/
 # =============================================================================
 outputs/
 adapters/
+fused_model/
 *_output/
 *_outputs/
 *_adapters/
 lora_*/
 merged_*/
+fused_*/
 *.gguf
 train.jsonl
 valid.jsonl

@@ -650,7 +650,7 @@ class MLXModelWrapper:
         **kwargs
     ):
         """
-        Save model in GGUF format for llama.cpp, Ollama, etc.
+        Save model in GGUF format for llama.cpp, Ollama, LM Studio, etc.
 
         This method exports the model (optionally with fused LoRA adapters) to GGUF format
         for use with llama.cpp, Ollama, LM Studio, and other GGUF-compatible tools.
@@ -658,18 +658,31 @@ class MLXModelWrapper:
         Args:
             output_dir: Directory/filename for GGUF file
             tokenizer: Tokenizer
-            quantization_method: GGUF quantization ("q4_k_m", "q5_k_m", "q8_0", etc.)
-                               Note: mlx_lm exports in fp16; this parameter is for documentation
+            quantization_method: GGUF quantization type (for documentation only,
+                               mlx_lm exports in fp16)
             **kwargs: Additional options including:
-                - de_quantize: Whether to dequantize the model before export (for quantized models)
+                - dequantize: Whether to dequantize the model before export
 
         Example:
-            >>> model.save_pretrained_gguf("model", tokenizer, quantization_method="q4_k_m")
+            >>> # With non-quantized model (recommended)
+            >>> model.save_pretrained_gguf("model", tokenizer)
+
+            >>> # With quantized model (requires dequantize)
+            >>> model.save_pretrained_gguf("model", tokenizer, dequantize=True)
+
+        Important - Quantized Model Limitation:
+            GGUF export from quantized (4-bit) base models is NOT supported by mlx_lm.
+            This is an upstream limitation, not an unsloth-mlx bug.
+            See: https://github.com/ml-explore/mlx-lm/issues/353
+
+            Workarounds:
+            1. Use a non-quantized base model (e.g., "Llama-3.2-1B-Instruct" not "-4bit")
+            2. Use dequantize=True (creates large fp16 file, re-quantize with llama.cpp)
+            3. Skip GGUF and use save_pretrained_merged() for MLX-only inference
 
         Note:
-            - GGUF export requires the base model to be Llama, Mistral, or Mixtral architecture
-            - Quantized models may need de_quantize=True for proper export
-            - The model is exported in fp16 precision
+            - Supported architectures: Llama, Mistral, Mixtral
+            - Output is fp16 precision (use llama.cpp to quantize further)
         """
         from unsloth_mlx.trainer import export_to_gguf
         from pathlib import Path
