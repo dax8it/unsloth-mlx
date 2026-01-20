@@ -41,6 +41,58 @@ from unsloth_mlx.losses import (
 )
 
 
+def _save_adapters_and_config(model, adapter_path: Path):
+    """
+    Save adapter weights and config (required for GGUF export).
+
+    This helper function is used by all RL trainers to ensure
+    adapter_config.json is created alongside adapters.safetensors.
+    """
+    try:
+        from mlx_lm.tuner.utils import save_adapters
+        actual_model = model.model if hasattr(model, 'model') else model
+        adapter_file = adapter_path / "adapters.safetensors"
+        adapter_path.mkdir(parents=True, exist_ok=True)
+        save_adapters(actual_model, str(adapter_file))
+
+        # Save adapter_config.json
+        lora_config = {}
+        if hasattr(model, 'lora_config') and model.lora_config:
+            lora_config = model.lora_config.copy()
+
+        r = lora_config.get('r', 16)
+        alpha = lora_config.get('lora_alpha', 16)
+
+        adapter_config = {
+            "lora_parameters": {
+                "rank": r,
+                "scale": alpha / r,
+                "dropout": lora_config.get('lora_dropout', 0.0),
+            },
+        }
+
+        target_modules = lora_config.get('target_modules', [])
+        if target_modules:
+            short_to_full = {
+                'q_proj': 'self_attn.q_proj', 'k_proj': 'self_attn.k_proj',
+                'v_proj': 'self_attn.v_proj', 'o_proj': 'self_attn.o_proj',
+                'gate_proj': 'mlp.gate_proj', 'up_proj': 'mlp.up_proj',
+                'down_proj': 'mlp.down_proj',
+            }
+            adapter_config["lora_parameters"]["keys"] = [
+                short_to_full.get(m, m) for m in target_modules
+            ]
+
+        config_path = adapter_path / "adapter_config.json"
+        with open(config_path, 'w') as f:
+            json.dump(adapter_config, f, indent=2)
+
+        return True
+    except Exception as e:
+        print(f"  ⚠ Could not save adapters: {e}")
+        return False
+
+
 class DPOConfig:
     """
     Configuration for Direct Preference Optimization training.
@@ -452,15 +504,9 @@ class DPOTrainer:
         return {"status": "success", "adapter_path": str(self.adapter_path)}
 
     def _save_adapters(self, step: int):
-        """Save adapter weights."""
-        try:
-            from mlx_lm.tuner.utils import save_adapters
-            actual_model = self.model.model if hasattr(self.model, 'model') else self.model
-            adapter_file = self.adapter_path / "adapters.safetensors"
-            save_adapters(actual_model, str(adapter_file))
+        """Save adapter weights and config."""
+        if _save_adapters_and_config(self.model, self.adapter_path):
             print(f"  ✓ Saved checkpoint at step {step}")
-        except Exception as e:
-            print(f"  ⚠ Could not save adapters: {e}")
 
     def _train_subprocess(self):
         """Fallback: Train using subprocess (SFT approximation)."""
@@ -658,9 +704,13 @@ class ORPOTrainer:
                 print(f"  Step {step + 1}/{self.iters} | Loss: {total_loss / self.logging_steps:.4f}")
                 total_loss = 0.0
 
+        # Save adapters and config
+        _save_adapters_and_config(self.model, self.adapter_path)
+
         print("\n" + "=" * 70)
         print("ORPO Training Complete!")
         print("=" * 70)
+        print(f"  Adapters saved to: {self.adapter_path}")
         return {"status": "success", "adapter_path": str(self.adapter_path)}
 
     def _train_subprocess(self):
@@ -842,9 +892,13 @@ class GRPOTrainer:
                 print(f"  Step {step + 1}/{self.iters} | Loss: {avg_loss:.4f}")
                 total_loss = 0.0
 
+        # Save adapters and config
+        _save_adapters_and_config(self.model, self.adapter_path)
+
         print("\n" + "=" * 70)
         print("GRPO Training Complete!")
         print("=" * 70)
+        print(f"  Adapters saved to: {self.adapter_path}")
         print(f"Note: Full GRPO with gradient flow through generation requires")
         print(f"      custom implementation. This version uses reward signals.")
         return {"status": "success", "adapter_path": str(self.adapter_path)}
@@ -974,9 +1028,13 @@ class KTOTrainer:
                 print(f"  Step {step + 1}/{self.iters} | Loss: {total_loss / self.logging_steps:.4f}")
                 total_loss = 0.0
 
+        # Save adapters and config
+        _save_adapters_and_config(self.model, self.adapter_path)
+
         print("\n" + "=" * 70)
         print("KTO Training Complete!")
         print("=" * 70)
+        print(f"  Adapters saved to: {self.adapter_path}")
         return {"status": "success", "adapter_path": str(self.adapter_path)}
 
 
@@ -1091,9 +1149,13 @@ class SimPOTrainer:
                 print(f"  Step {step + 1}/{self.iters} | Loss: {total_loss / self.logging_steps:.4f}")
                 total_loss = 0.0
 
+        # Save adapters and config
+        _save_adapters_and_config(self.model, self.adapter_path)
+
         print("\n" + "=" * 70)
         print("SimPO Training Complete!")
         print("=" * 70)
+        print(f"  Adapters saved to: {self.adapter_path}")
         return {"status": "success", "adapter_path": str(self.adapter_path)}
 
 

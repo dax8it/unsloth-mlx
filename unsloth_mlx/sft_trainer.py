@@ -351,6 +351,53 @@ class SFTTrainer:
 
         return False
 
+    def _save_adapter_config(self) -> None:
+        """
+        Save adapter_config.json file required by mlx_lm for loading adapters.
+
+        This file is needed when using mlx_lm.fuse to merge adapters or
+        when exporting to GGUF format.
+        """
+        import json
+
+        # Get LoRA config from model or use defaults from trainer
+        lora_config = {}
+        if hasattr(self.model, 'lora_config') and self.model.lora_config:
+            lora_config = self.model.lora_config.copy()
+
+        # Build adapter config in mlx_lm format
+        adapter_config = {
+            "lora_layers": getattr(self, 'lora_layers', None),  # Number of layers with LoRA
+            "lora_parameters": {
+                "rank": lora_config.get('r', self.lora_r),
+                "scale": lora_config.get('lora_alpha', self.lora_alpha) / lora_config.get('r', self.lora_r),
+                "dropout": lora_config.get('lora_dropout', 0.0),
+            },
+        }
+
+        # Add target modules (keys) if available
+        target_modules = lora_config.get('target_modules', [])
+        if target_modules:
+            # Convert to mlx_lm format (full paths)
+            short_to_full = {
+                'q_proj': 'self_attn.q_proj',
+                'k_proj': 'self_attn.k_proj',
+                'v_proj': 'self_attn.v_proj',
+                'o_proj': 'self_attn.o_proj',
+                'gate_proj': 'mlp.gate_proj',
+                'up_proj': 'mlp.up_proj',
+                'down_proj': 'mlp.down_proj',
+            }
+            keys = [short_to_full.get(m, m) for m in target_modules]
+            adapter_config["lora_parameters"]["keys"] = keys
+
+        # Save to adapter_config.json
+        config_path = self.adapter_path / "adapter_config.json"
+        with open(config_path, 'w') as f:
+            json.dump(adapter_config, f, indent=2)
+
+        print(f"  Adapter config saved to: {config_path}")
+
     def _prepare_training_data(self) -> str:
         """Prepare training data in MLX-LM compatible format.
 
@@ -581,6 +628,9 @@ class SFTTrainer:
                 val_dataset=valid_set,
                 args=training_args,
             )
+
+            # Save adapter_config.json (required by mlx_lm for loading adapters)
+            self._save_adapter_config()
 
             print("\n" + "=" * 70)
             print("Training Complete!")

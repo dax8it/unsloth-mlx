@@ -387,8 +387,18 @@ def export_to_gguf(
         print(f"Error during GGUF export: {error_msg}")
 
         # Provide helpful error messages
-        if "config.json" in error_msg.lower() or "FileNotFoundError" in str(e):
-            print("\n⚠️  Model config not found. This usually means:")
+        if "adapter_config.json" in error_msg.lower():
+            print("\n⚠️  Adapter config not found. This usually means:")
+            print("   1. The adapter path is missing adapter_config.json")
+            print("   2. Training was done with an older version of unsloth-mlx")
+            print(f"\n   To fix, either:")
+            print(f"   a) Re-train with unsloth-mlx >= 0.3.4 (saves adapter_config.json)")
+            print(f"   b) Export without adapters (base model only):")
+            print(f"      model.save_pretrained_gguf('model', tokenizer)")
+            if adapter_path:
+                print(f"\n   Adapter path checked: {adapter_path}")
+        elif "config.json" in error_msg.lower() or "FileNotFoundError" in str(e):
+            print("\n⚠️  Config file not found. This usually means:")
             print("   1. The model path is incorrect")
             print("   2. The model hasn't been downloaded yet")
             print(f"\n   Try loading the model first with mlx_lm:")
