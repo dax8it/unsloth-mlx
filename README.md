@@ -12,8 +12,7 @@
   <a href="https://github.com/ARahim3/unsloth-mlx"><img src="https://img.shields.io/github/stars/arahim3/unsloth-mlx?style=social" alt="GitHub stars"></a>
   <a href="https://pepy.tech/projects/unsloth-mlx"><img src="https://static.pepy.tech/personalized-badge/unsloth-mlx?period=total&units=INTERNATIONAL_SYSTEM&left_color=GRAY&right_color=GREEN&left_text=downloads" alt="PyPI Downloads"></a>
   <a href="https://github.com/ARahim3/unsloth-mlx"><img alt="GitHub forks" src="https://img.shields.io/github/forks/arahim3/unsloth-mlx"></a>
-</p>
-<p align="center">
+  <br>
   <a href="#installation"><img src="https://img.shields.io/badge/Platform-Apple%20Silicon-black?logo=apple" alt="Platform"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white" alt="Python"></a>
   <a href="https://github.com/ml-explore/mlx"><img src="https://img.shields.io/badge/MLX-0.20+-green" alt="MLX"></a>
