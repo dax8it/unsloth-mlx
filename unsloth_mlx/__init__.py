@@ -13,7 +13,7 @@ Supported Training Methods:
 - VLM (Vision Language Model) fine-tuning
 """
 
-__version__ = "0.3.4"  # Fixed GGUF export + adapter_config.json saving
+__version__ = "0.3.5"  # Fixed GGUF export + adapter_config.json saving
 
 from unsloth_mlx.model import FastLanguageModel
 from unsloth_mlx.trainer import (

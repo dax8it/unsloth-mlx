@@ -10,6 +10,7 @@ Run with: pytest tests/test_end_to_end.py -v
 import pytest
 import tempfile
 import json
+import os
 from pathlib import Path
 
 
@@ -218,6 +219,119 @@ class TestRLTrainersEndToEnd:
                 config = json.load(f)
             assert "num_layers" in config
             assert "lora_parameters" in config
+
+
+class TestMergedModelSave:
+    """Test save_pretrained_merged workflow (GitHub issue #4)."""
+
+    @pytest.fixture
+    def trained_model(self):
+        """Fixture providing a model with LoRA that has been 'trained'."""
+        from unsloth_mlx import FastLanguageModel
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name="mlx-community/Llama-3.2-1B-Instruct-4bit",
+            max_seq_length=512,
+            load_in_4bit=True,
+        )
+        model = FastLanguageModel.get_peft_model(model, r=8)
+
+        # Apply LoRA so we have something to fuse
+        model._apply_lora()
+
+        return model, tokenizer
+
+    def test_save_pretrained_merged_fuses_lora(self, trained_model):
+        """Test that save_pretrained_merged properly fuses LoRA layers.
+
+        This was broken - LoRA layers were saved as-is, causing
+        'parameters not in model' errors when loading.
+        """
+        model, tokenizer = trained_model
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            merged_path = os.path.join(tmpdir, "merged")
+
+            # Save merged model
+            model.save_pretrained_merged(merged_path, tokenizer)
+
+            # Check that model files were saved
+            assert os.path.exists(merged_path), "Merged model directory not created"
+
+            # Check for model weights file
+            weights_file = os.path.join(merged_path, "model.safetensors")
+            weights_exist = os.path.exists(weights_file)
+
+            # Also check for sharded weights (larger models)
+            sharded_weights = list(Path(merged_path).glob("model-*.safetensors"))
+
+            assert weights_exist or len(sharded_weights) > 0, \
+                f"No model weights found in {merged_path}"
+
+    def test_merged_model_has_no_lora_keys(self, trained_model):
+        """Test that merged model doesn't have LoRA-specific keys.
+
+        The bug was that keys like 'k_proj.linear.biases' were being
+        saved, which indicates LoRA layers weren't fused.
+        """
+        import mlx.core as mx
+        model, tokenizer = trained_model
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            merged_path = os.path.join(tmpdir, "merged")
+            model.save_pretrained_merged(merged_path, tokenizer)
+
+            # Load the saved weights and check keys
+            weights_file = os.path.join(merged_path, "model.safetensors")
+            if os.path.exists(weights_file):
+                weights = mx.load(weights_file)
+                keys = list(weights.keys())
+
+                # These patterns indicate unfused LoRA layers (NOT quantization scales)
+                # LoRA wrapper structure: layer.linear.weight, layer.linear.biases
+                # LoRA matrices: layer.lora_a, layer.lora_b
+                lora_patterns = ['.linear.weight', '.linear.biases', '.lora_a', '.lora_b']
+                problematic_keys = [
+                    k for k in keys
+                    if any(p in k for p in lora_patterns)
+                ]
+
+                assert len(problematic_keys) == 0, \
+                    f"Found unfused LoRA keys: {problematic_keys[:5]}"
+
+
+class TestLoadAdapter:
+    """Test load_adapter functionality."""
+
+    def test_load_adapter_method_exists(self):
+        """Test that load_adapter method is available."""
+        from unsloth_mlx import FastLanguageModel
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name="mlx-community/Llama-3.2-1B-Instruct-4bit",
+            max_seq_length=512,
+            load_in_4bit=True,
+        )
+
+        assert hasattr(model, 'load_adapter'), "load_adapter method missing"
+
+    def test_load_adapter_requires_files(self):
+        """Test that load_adapter fails gracefully with missing files."""
+        from unsloth_mlx import FastLanguageModel
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name="mlx-community/Llama-3.2-1B-Instruct-4bit",
+            max_seq_length=512,
+            load_in_4bit=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Try to load from empty directory
+            with pytest.raises(FileNotFoundError) as excinfo:
+                model.load_adapter(tmpdir)
+
+            assert "adapters.safetensors" in str(excinfo.value) or \
+                   "does not exist" in str(excinfo.value)
 
 
 # Run tests

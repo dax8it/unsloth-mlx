@@ -245,18 +245,33 @@ def save_model_hf_format(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Saving model to {output_dir}...")
+    print(f"Saving merged model to {output_dir}...")
 
     # For MLX models, we need to use mlx_lm utilities to save
     # This will save in a format compatible with HuggingFace
     try:
         from mlx_lm.utils import save_model
+        from mlx.utils import tree_unflatten
 
-        # Save the underlying MLX model
+        # Get the underlying MLX model
         if hasattr(model, 'model'):
             actual_model = model.model
         else:
             actual_model = model
+
+        # CRITICAL: Fuse LoRA adapters into base weights before saving
+        # Without this, LoRA layers are saved as-is and won't load properly
+        fused_linears = [
+            (n, m.fuse(dequantize=kwargs.get('dequantize', False)))
+            for n, m in actual_model.named_modules()
+            if hasattr(m, "fuse")
+        ]
+
+        if fused_linears:
+            print(f"  Fusing {len(fused_linears)} LoRA layers into base model...")
+            actual_model.update_modules(tree_unflatten(fused_linears))
+        else:
+            print("  No LoRA layers to fuse (saving base model as-is)")
 
         # mlx_lm.utils.save_model only takes (save_path, model) - tokenizer is saved separately
         save_model(str(output_dir), actual_model)

@@ -618,6 +618,59 @@ class MLXModelWrapper:
             print(f"⚠️  No adapters found. Searched: {searched}")
             print("   Train the model first with SFTTrainer")
 
+    def load_adapter(self, adapter_path: str, **kwargs):
+        """
+        Load LoRA adapters from a saved adapter directory.
+
+        This allows loading fine-tuned adapters into a base model for inference.
+
+        Args:
+            adapter_path: Path to directory containing adapters.safetensors and adapter_config.json
+            **kwargs: Additional options
+
+        Example:
+            >>> model, tokenizer = FastLanguageModel.from_pretrained("base-model")
+            >>> model.load_adapter("lora_model")  # Load saved adapters
+            >>> # Now model has the fine-tuned weights loaded
+        """
+        from mlx_lm.tuner.utils import load_adapters
+
+        adapter_path = Path(adapter_path)
+
+        if not adapter_path.exists():
+            raise FileNotFoundError(f"Adapter path does not exist: {adapter_path}")
+
+        # Check for required files
+        adapter_file = adapter_path / "adapters.safetensors"
+        config_file = adapter_path / "adapter_config.json"
+
+        if not adapter_file.exists():
+            raise FileNotFoundError(
+                f"adapters.safetensors not found in {adapter_path}. "
+                "Make sure you saved the adapters with model.save_pretrained()"
+            )
+
+        if not config_file.exists():
+            raise FileNotFoundError(
+                f"adapter_config.json not found in {adapter_path}. "
+                "This file is required by mlx_lm to load adapters. "
+                "Re-train with unsloth-mlx >= 0.3.4 which saves this file."
+            )
+
+        print(f"Loading adapters from {adapter_path}...")
+
+        # Get the actual model
+        actual_model = self.model if hasattr(self, 'model') else self
+
+        # Load adapters using mlx_lm
+        self.model = load_adapters(actual_model, str(adapter_path))
+
+        # Mark that LoRA is now applied
+        self._lora_applied = True
+        self._adapter_path = adapter_path
+
+        print(f"✓ Adapters loaded successfully")
+
     def save_pretrained_merged(
         self,
         output_dir: str,
