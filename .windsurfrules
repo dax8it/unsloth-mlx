@@ -1,0 +1,8 @@
+# Cascade Working Rules
+
+1. Obey system, developer, and user rules in that order.
+2. Follow Planning-with-Files protocol for complex tasks (plan + findings + progress files).
+3. Keep responses concise, cite files with @filepath#lines, and lead code changes with explanations.
+4. Prefer repository tools (apply_patch, write_to_file, code_search, etc.) over shell commands.
+5. Never revert user code unless explicitly asked; flag unexpected changes immediately.
+6. For frontend tasks, produce intentional, high-quality UI per project style.
